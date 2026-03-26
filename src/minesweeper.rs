@@ -31,6 +31,16 @@ pub struct Board {
 }
 
 impl Board {
+    /// Creates a new Minesweeper board.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rusty_mines::minesweeper::Board;
+    /// let board = Board::new(10, 10, 15);
+    /// assert_eq!(board.width, 10);
+    /// assert_eq!(board.num_mines, 15);
+    /// ```
     pub fn new(width: usize, height: usize, num_mines: usize) -> Self {
         let cells = vec![
             Cell {
