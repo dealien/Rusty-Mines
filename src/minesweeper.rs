@@ -87,9 +87,11 @@ impl Board {
         while mines_placed < actual_mines {
             let x = rng.gen_range(0..self.width);
             let y = rng.gen_range(0..self.height);
-            
+
             // Ensure first click and its surroundings are not mines
-            if (x as isize - first_x as isize).abs() <= 1 && (y as isize - first_y as isize).abs() <= 1 {
+            if (x as isize - first_x as isize).abs() <= 1
+                && (y as isize - first_y as isize).abs() <= 1
+            {
                 continue;
             }
 
@@ -110,18 +112,22 @@ impl Board {
                 if self.cells[self.index(x, y)].is_mine {
                     continue;
                 }
-                
+
                 let mut count = 0;
                 for dy in -1..=1 {
                     for dx in -1..=1 {
                         if dx == 0 && dy == 0 {
                             continue;
                         }
-                        
+
                         let nx = x as isize + dx;
                         let ny = y as isize + dy;
-                        
-                        if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
+
+                        if nx >= 0
+                            && nx < self.width as isize
+                            && ny >= 0
+                            && ny < self.height as isize
+                        {
                             let n_idx = self.index(nx as usize, ny as usize);
                             if self.cells[n_idx].is_mine {
                                 count += 1;
@@ -129,7 +135,7 @@ impl Board {
                         }
                     }
                 }
-                
+
                 let idx = self.index(x, y);
                 self.cells[idx].adjacent_mines = count;
             }
@@ -170,10 +176,10 @@ impl Board {
                     if dx == 0 && dy == 0 {
                         continue;
                     }
-                    
+
                     let nx = x as isize + dx;
                     let ny = y as isize + dy;
-                    
+
                     if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
                         self.reveal(nx as usize, ny as usize);
                     }
@@ -188,13 +194,13 @@ impl Board {
         if self.state != GameState::Playing {
             return;
         }
-        
+
         if x >= self.width || y >= self.height {
             return;
         }
 
         let idx = self.index(x, y);
-        
+
         match self.cells[idx].state {
             CellState::Hidden => {
                 self.cells[idx].state = CellState::Flagged;
@@ -214,7 +220,7 @@ impl Board {
                 break;
             }
         }
-        
+
         if won {
             self.state = GameState::Won;
         }
@@ -249,11 +255,11 @@ mod tests {
         let mut board = Board::new(5, 5, 5);
         board.reveal(2, 2);
         assert!(!board.first_click);
-        
+
         // Count placed mines
         let mines = board.cells.iter().filter(|c| c.is_mine).count();
         assert_eq!(mines, 5);
-        
+
         // Ensure first click area is safe
         for dy in -1..=1 {
             for dx in -1..=1 {
