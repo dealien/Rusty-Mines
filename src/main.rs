@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod minesweeper;
-use minesweeper::{Board, CellState, GameState};
+use rusty_mines::minesweeper::{Board, CellState, GameState};
 use eframe::egui;
 
 struct MinesweeperApp {
