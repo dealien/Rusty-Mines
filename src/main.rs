@@ -192,30 +192,66 @@ fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
         }
     }
 
-    // Pass 2 – definitive override from satisfied or fully-constrained cells.
-    for y in 0..board.height {
-        for x in 0..board.width {
-            let cell = match board.get_cell(x, y) {
-                Some(c) if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 => {
-                    c
+    // Pass 2 – iterative constraint propagation until convergence.
+    // Same algorithm as apply_probability_guess in solver.rs:
+    // confirmed_safe cells are excluded from uncertainty counts,
+    // confirmed_mine cells are treated as additional flags.
+    // Repeats until no new deductions fire.
+    let mut confirmed_safe: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+    let mut confirmed_mine: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+
+    loop {
+        let mut changed = false;
+        for y in 0..board.height {
+            for x in 0..board.width {
+                let cell = match board.get_cell(x, y) {
+                    Some(c)
+                        if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 =>
+                    {
+                        c
+                    }
+                    _ => continue,
+                };
+                // neighbours() returns (base_flag_count, all_hidden_neighbours).
+                let (base_flags, raw_hidden) = neighbours(x, y);
+                let mut extra_flags = 0usize;
+                let mut uncertain: Vec<(usize, usize)> = Vec::new();
+                for pos in &raw_hidden {
+                    if confirmed_mine.contains(pos) {
+                        extra_flags += 1;
+                    } else if !confirmed_safe.contains(pos) {
+                        uncertain.push(*pos);
+                    }
                 }
-                _ => continue,
-            };
-            let (flag_count, hidden) = neighbours(x, y);
-            if hidden.is_empty() {
-                continue;
-            }
-            let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
-            if effective == 0 {
-                for pos in &hidden {
-                    probs.insert(*pos, 0.0);
-                }
-            } else if effective == hidden.len() {
-                for pos in &hidden {
-                    probs.insert(*pos, 1.0);
+                let effective =
+                    (cell.adjacent_mines as usize).saturating_sub(base_flags + extra_flags);
+                if effective == 0 {
+                    for pos in &uncertain {
+                        if confirmed_safe.insert(*pos) {
+                            changed = true;
+                        }
+                    }
+                } else if !uncertain.is_empty() && effective == uncertain.len() {
+                    for pos in &uncertain {
+                        if confirmed_mine.insert(*pos) {
+                            changed = true;
+                        }
+                    }
                 }
             }
         }
+        if !changed {
+            break;
+        }
+    }
+
+    for pos in &confirmed_safe {
+        probs.insert(*pos, 0.0);
+    }
+    for pos in &confirmed_mine {
+        probs.insert(*pos, 1.0);
     }
 
     probs

@@ -319,58 +319,82 @@ impl Solver {
             }
         }
 
-        // Pass 2 – definitive override: satisfied / fully-constrained cells.
+        // Pass 2 – iterative constraint propagation until convergence.
         //
-        // The max-blend in pass 1 can never reduce a cell's estimate to 0 %.
-        // This pass corrects that: if a revealed numbered cell has all its mines
-        // accounted for by flags (effective == 0), every remaining hidden
-        // neighbour is provably SAFE (0 %).  Conversely, if every hidden
-        // neighbour must be a mine (effective == hidden count), they are 100 %.
-        for y in 0..board.height {
-            for x in 0..board.width {
-                let cell = match board.get_cell(x, y) {
-                    Some(c) => c,
-                    None => continue,
-                };
-                if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
-                    continue;
-                }
-                let neighbours = get_neighbours(board, x, y);
-                let flag_count = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .count();
-                let hidden: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
+        // A single pass cannot catch transitive deductions: e.g. Cell A is
+        // confirmed safe → constraints containing A are re-evaluated → Cell B
+        // may now also be confirmed safe or a mine.  We repeat until nothing
+        // changes.
+        //
+        // Rules per numbered cell on each iteration:
+        //   confirmed_safe cells → excluded (treated as already-revealed safe)
+        //   confirmed_mine cells → counted as additional effective flags
+        //   If effective_mines == 0:            all uncertain hidden → safe (0 %)
+        //   If effective_mines == uncertain_count: all uncertain hidden → mine (100 %)
+        let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
+        let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
 
-                if hidden.is_empty() {
-                    continue;
-                }
-                let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+        loop {
+            let mut changed = false;
+            for y in 0..board.height {
+                for x in 0..board.width {
+                    let cell = match board.get_cell(x, y) {
+                        Some(c)
+                            if c.state == CellState::Revealed
+                                && !c.is_mine
+                                && c.adjacent_mines > 0 =>
+                        {
+                            c
+                        }
+                        _ => continue,
+                    };
+                    let all_neighbours = get_neighbours(board, x, y);
+                    let mut flag_count = 0usize;
+                    let mut uncertain: Vec<(usize, usize)> = Vec::new();
 
-                if effective == 0 {
-                    // All mines flagged → hidden neighbours are definitely safe.
-                    for pos in &hidden {
-                        probs.insert(*pos, 0.0);
+                    for &pos in &all_neighbours {
+                        match board.get_cell(pos.0, pos.1).map(|c| c.state) {
+                            Some(CellState::Flagged) => flag_count += 1,
+                            Some(CellState::Hidden) => {
+                                if confirmed_mine.contains(&pos) {
+                                    flag_count += 1; // treat as additional flag
+                                } else if !confirmed_safe.contains(&pos) {
+                                    uncertain.push(pos); // truly uncertain
+                                }
+                                // confirmed_safe hidden cells are ignored
+                            }
+                            _ => {}
+                        }
                     }
-                } else if effective == hidden.len() {
-                    // Every hidden neighbour must be a mine.
-                    for pos in &hidden {
-                        probs.insert(*pos, 1.0);
+
+                    let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+
+                    if effective == 0 {
+                        for pos in &uncertain {
+                            if confirmed_safe.insert(*pos) {
+                                changed = true;
+                            }
+                        }
+                    } else if !uncertain.is_empty() && effective == uncertain.len() {
+                        for pos in &uncertain {
+                            if confirmed_mine.insert(*pos) {
+                                changed = true;
+                            }
+                        }
                     }
                 }
             }
+            if !changed {
+                break;
+            }
+        }
+
+        // Apply confirmed knowledge — these override probabilistic estimates.
+        for pos in &confirmed_safe {
+            probs.insert(*pos, 0.0);
+        }
+        for pos in &confirmed_mine {
+            probs.insert(*pos, 1.0);
         }
 
         self.state.probabilities = probs.clone();
