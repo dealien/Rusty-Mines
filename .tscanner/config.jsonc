@@ -48,10 +48,27 @@
       }
     },
     "script": {
+      "cargo-fmt-check": {
+        "command": "npx.cmd tsx script-rules/cargo-fmt-check.ts",
+        "message": "File is not formatted correctly. Run `cargo fmt` to fix.",
+        "include": [
+          "**/*.rs"
+        ]
+      },
+      "cargo-clippy-check": {
+        "command": "npx.cmd tsx script-rules/cargo-clippy-check.ts",
+        "message": "File has clippy warnings/errors. Run `cargo clippy` to view and fix.",
+        "include": [
+          "**/*.rs"
+        ]
+      },
       "example-no-long-files": {
-        "command": "npx tsx script-rules/example-no-long-files.ts",
+        "command": "npx.cmd tsx script-rules/example-no-long-files.ts",
         "message": "File exceeds 300 lines limit",
-        "include": ["packages/**/*.ts", "packages/**/*.rs"]
+        "include": [
+          "packages/**/*.ts",
+          "packages/**/*.rs"
+        ]
       }
     }
   },
@@ -61,15 +78,29 @@
       "mode": "agentic",
       "message": "Type union could be replaced with an enum for better type safety",
       "severity": "warning",
-      "include": ["**/*.ts"]
+      "include": [
+        "**/*.ts"
+      ]
     }
   },
   "ai": {
     "provider": "claude"
   },
   "files": {
-    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
-    "exclude": ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.git/**"]
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/.git/**"
+    ]
   },
   "codeEditor": {
     "highlightErrors": true,

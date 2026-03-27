@@ -9,6 +9,7 @@ struct MinesweeperApp {
     cfg_width: usize,
     cfg_height: usize,
     cfg_mines: usize,
+
     // Track last board size to trigger resize
     last_board_size: (usize, usize),
 }

@@ -26,6 +26,17 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run All Checks (Lint, Format, Test)",
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Check All (lint, format, test)",
+            "runtimeExecutable": "node",
+            "runtimeArgs": [
+                "-e",
+                "console.log('Finished all checks!')"
+            ]
         }
     ]
 }

@@ -1,5 +1,7 @@
 {
   "devDependencies": {
-    "tscanner": "^0.1.3"
+    "@types/node": "^25.5.0",
+    "tscanner": "^0.1.3",
+    "tsx": "^4.21.0"
   }
 }
