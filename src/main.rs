@@ -42,9 +42,9 @@ struct MinesweeperApp {
 
 impl Default for MinesweeperApp {
     fn default() -> Self {
-        let width = 10;
-        let height = 10;
-        let mines = 15;
+        let width = 25;
+        let height = 25;
+        let mines = 100;
         Self {
             board: Board::new(width, height, mines),
             cfg_width: width,
@@ -54,11 +54,11 @@ impl Default for MinesweeperApp {
 
             solver: Solver::new(),
             solver_auto_play: false,
-            solver_speed_ms: 300,
+            solver_speed_ms: 50,
             last_solver_step: Instant::now(),
             show_solver_panel: true,
             show_history_panel: true,
-            probability_mode: ProbabilityMode::WhenInUse,
+            probability_mode: ProbabilityMode::Always,
 
             action_history: Vec::new(),
         }
@@ -525,6 +525,14 @@ impl eframe::App for MinesweeperApp {
                         self.board = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines);
                         self.solver.state.clear();
                         self.solver_auto_play = false;
+                        self.action_history.clear();
+                    }
+
+                    if ui.button("Solve New Game").clicked() {
+                        self.board = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines);
+                        self.solver.state.clear();
+                        self.solver_auto_play = true;
+                        self.last_solver_step = Instant::now();
                         self.action_history.clear();
                     }
                 });
