@@ -83,6 +83,9 @@ fn get_color(mines: u8) -> egui::Color32 {
 
 /// Map a mine-probability (0.0–1.0) to a display colour for the overlay text.
 fn probability_color(prob: f32) -> egui::Color32 {
+    if prob <= 0.0 {
+        return egui::Color32::LIGHT_BLUE;
+    }
     // Green (safe) → yellow → red (dangerous)
     let r = (prob * 2.0 * 255.0).min(255.0) as u8;
     let g = ((1.0 - prob) * 2.0 * 255.0).min(255.0) as u8;
