@@ -14,34 +14,29 @@ use rusty_mines::solver::{Solver, SolverAction};
 enum ProbabilityMode {
     /// Never display probabilities.
     Off,
-    /// Only display probabilities when the solver has computed a move (i.e. the
-    /// solver was last stepped or auto-played and its state is populated).
+    /// Only when the solver has computed a move (state is populated).
     WhenInUse,
-    /// Always display probabilities, re-computing on every frame so they stay
-    /// current after manual moves or flags.
+    /// Always recompute and display on every frame.
     Always,
 }
 
 // ─── Application State ───────────────────────────────────────────────────────
 
 struct MinesweeperApp {
-    // Game state
     board: Board,
     cfg_width: usize,
     cfg_height: usize,
     cfg_mines: usize,
     last_board_size: (usize, usize),
 
-    // Solver state
     solver: Solver,
     solver_auto_play: bool,
-    solver_speed_ms: u64, // milliseconds between auto-play steps
+    solver_speed_ms: u64,
     last_solver_step: Instant,
     show_solver_panel: bool,
     show_history_panel: bool,
     probability_mode: ProbabilityMode,
 
-    // History log
     action_history: Vec<String>,
 }
 
@@ -94,8 +89,7 @@ fn probability_color(prob: f32) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, 60)
 }
 
-/// Apply a [`SolverAction`] returned by the solver to the board.
-/// Returns a human-readable description for the history log.
+/// Apply a [`SolverAction`] to the board, returning a history description.
 fn apply_action(board: &mut Board, action: &SolverAction) -> Option<String> {
     match *action {
         SolverAction::Reveal(x, y) => {
@@ -115,9 +109,11 @@ fn apply_action(board: &mut Board, action: &SolverAction) -> Option<String> {
     }
 }
 
-/// Compute per-cell mine probabilities directly from the board without
-/// running the full solver pipeline. Used for "Always" mode so probabilities
-/// stay current after manual moves.
+/// Compute mine probabilities directly from board state (two-pass algorithm).
+///
+/// * **Pass 1**: global density + local max-blend heuristic.
+/// * **Pass 2**: definitive override — satisfied constraints produce 0 %;
+///   fully-constrained hidden sets produce 100 %.
 fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
     let total_hidden = board
         .cells
@@ -136,57 +132,85 @@ fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
     }
 
     let global_prob = remaining_mines as f32 / total_hidden as f32;
-    let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
 
+    let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
     for y in 0..board.height {
         for x in 0..board.width {
-            if let Some(cell) = board.get_cell(x, y)
-                && cell.state == CellState::Hidden
+            if board
+                .get_cell(x, y)
+                .is_some_and(|c| c.state == CellState::Hidden)
             {
                 probs.insert((x, y), global_prob);
             }
         }
     }
 
-    // Refine using each revealed numbered cell.
-    for y in 0..board.height {
-        for x in 0..board.width {
-            let cell = match board.get_cell(x, y) {
-                Some(c) => c,
-                None => continue,
-            };
-            if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
-                continue;
-            }
-            let mut flag_count = 0usize;
-            let mut hidden_neighbours: Vec<(usize, usize)> = Vec::new();
-
-            for dy in -1_i32..=1 {
-                for dx in -1_i32..=1 {
-                    if dx == 0 && dy == 0 {
-                        continue;
-                    }
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-                    if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32 {
-                        let nx = nx as usize;
-                        let ny = ny as usize;
-                        match board.get_cell(nx, ny).map(|c| c.state) {
-                            Some(CellState::Flagged) => flag_count += 1,
-                            Some(CellState::Hidden) => hidden_neighbours.push((nx, ny)),
-                            _ => {}
-                        }
+    // Shared neighbour-gathering closure.
+    let neighbours = |cx: usize, cy: usize| -> (usize, Vec<(usize, usize)>) {
+        let mut flags = 0usize;
+        let mut hidden = Vec::new();
+        for dy in -1_i32..=1 {
+            for dx in -1_i32..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = cx as i32 + dx;
+                let ny = cy as i32 + dy;
+                if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32 {
+                    match board.get_cell(nx as usize, ny as usize).map(|c| c.state) {
+                        Some(CellState::Flagged) => flags += 1,
+                        Some(CellState::Hidden) => hidden.push((nx as usize, ny as usize)),
+                        _ => {}
                     }
                 }
             }
+        }
+        (flags, hidden)
+    };
 
-            if hidden_neighbours.is_empty() {
+    // Pass 1 – local max-blend heuristic.
+    for y in 0..board.height {
+        for x in 0..board.width {
+            let cell = match board.get_cell(x, y) {
+                Some(c) if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 => {
+                    c
+                }
+                _ => continue,
+            };
+            let (flag_count, hidden) = neighbours(x, y);
+            if hidden.is_empty() {
                 continue;
             }
             let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
-            let local_prob = effective as f32 / hidden_neighbours.len() as f32;
-            for pos in &hidden_neighbours {
+            let local_prob = effective as f32 / hidden.len() as f32;
+            for pos in &hidden {
                 probs.entry(*pos).and_modify(|p| *p = p.max(local_prob));
+            }
+        }
+    }
+
+    // Pass 2 – definitive override from satisfied or fully-constrained cells.
+    for y in 0..board.height {
+        for x in 0..board.width {
+            let cell = match board.get_cell(x, y) {
+                Some(c) if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 => {
+                    c
+                }
+                _ => continue,
+            };
+            let (flag_count, hidden) = neighbours(x, y);
+            if hidden.is_empty() {
+                continue;
+            }
+            let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+            if effective == 0 {
+                for pos in &hidden {
+                    probs.insert(*pos, 0.0);
+                }
+            } else if effective == hidden.len() {
+                for pos in &hidden {
+                    probs.insert(*pos, 1.0);
+                }
             }
         }
     }
@@ -198,7 +222,7 @@ fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
 
 impl eframe::App for MinesweeperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // ── Auto-resize window when board dimensions change ──────────────────
+        // ── Auto-resize main window ──────────────────────────────────────────
         if self.last_board_size != (self.board.width, self.board.height) {
             let cell_size = 30.0;
             let spacing = 2.0;
@@ -208,8 +232,7 @@ impl eframe::App for MinesweeperApp {
 
             let grid_width = self.board.width as f32 * cell_size
                 + (self.board.width.saturating_sub(1)) as f32 * spacing;
-            let top_panel_min_width = 380.0;
-            let desired_width = (grid_width + horizontal_padding).max(top_panel_min_width);
+            let desired_width = (grid_width + horizontal_padding).max(380.0);
             let desired_height = self.board.height as f32 * cell_size
                 + (self.board.height.saturating_sub(1)) as f32 * spacing
                 + top_panel_height
@@ -222,10 +245,9 @@ impl eframe::App for MinesweeperApp {
             self.last_board_size = (self.board.width, self.board.height);
         }
 
-        // ── Non-blocking solver auto-play ────────────────────────────────────
+        // ── Non-blocking auto-play ───────────────────────────────────────────
         if self.solver_auto_play && self.board.state == GameState::Playing {
-            let elapsed = self.last_solver_step.elapsed();
-            if elapsed >= Duration::from_millis(self.solver_speed_ms) {
+            if self.last_solver_step.elapsed() >= Duration::from_millis(self.solver_speed_ms) {
                 let action = self.solver.get_next_move(&self.board);
                 if let Some(desc) = apply_action(&mut self.board, &action) {
                     let rule = self.solver.state.current_rule.clone();
@@ -237,6 +259,173 @@ impl eframe::App for MinesweeperApp {
                 }
             }
             ctx.request_repaint_after(Duration::from_millis(self.solver_speed_ms));
+        }
+
+        // ── Pre-compute values shared with popup viewports ───────────────────
+        let can_step = self.board.state == GameState::Playing;
+        let auto_play_active = self.solver_auto_play;
+        let current_rule = self.solver.state.current_rule.clone();
+        let highlight_count = self.solver.state.highlighted_cells.len();
+
+        // Deferred actions from popup windows (avoids simultaneous mut borrows).
+        let mut do_step = false;
+        let mut do_toggle_auto = false;
+        let mut solver_closed = false;
+        let mut history_closed = false;
+        let mut clear_history = false;
+
+        // ── Solver popup window (separate OS window) ─────────────────────────
+        if self.show_solver_panel {
+            let speed_ms = &mut self.solver_speed_ms;
+            let prob_mode = &mut self.probability_mode;
+
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of("solver_panel"),
+                egui::ViewportBuilder::default()
+                    .with_title("Auto-Solver")
+                    .with_resizable(false)
+                    .with_inner_size([300.0_f32, 240.0]),
+                |ctx, _class| {
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        solver_closed = true;
+                    }
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("Rule: {current_rule}"))
+                                .italics()
+                                .weak(),
+                        );
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(can_step, egui::Button::new("⏭ Step"))
+                                .clicked()
+                            {
+                                do_step = true;
+                            }
+                            let auto_label = if auto_play_active {
+                                "⏸ Pause"
+                            } else {
+                                "▶ Auto-Play"
+                            };
+                            if ui
+                                .add_enabled(can_step, egui::Button::new(auto_label))
+                                .clicked()
+                            {
+                                do_toggle_auto = true;
+                            }
+                        });
+
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            ui.label("Speed:");
+                            let mut spd = *speed_ms as f32;
+                            ui.add(
+                                egui::Slider::new(&mut spd, 50.0..=2000.0)
+                                    .suffix(" ms")
+                                    .logarithmic(true),
+                            );
+                            *speed_ms = spd as u64;
+                        });
+
+                        ui.separator();
+
+                        ui.label("Probabilities:");
+                        ui.radio_value(prob_mode, ProbabilityMode::Off, "Off");
+                        ui.radio_value(prob_mode, ProbabilityMode::WhenInUse, "Show when in use");
+                        ui.radio_value(prob_mode, ProbabilityMode::Always, "Always show");
+
+                        if highlight_count > 0 {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new(format!("Evaluating {highlight_count} cells"))
+                                    .color(egui::Color32::YELLOW),
+                            );
+                        }
+                    });
+                },
+            );
+
+            if solver_closed {
+                self.show_solver_panel = false;
+            }
+        }
+
+        // ── History popup window (separate OS window) ────────────────────────
+        if self.show_history_panel {
+            let history_slice: &[String] = &self.action_history;
+            let total = history_slice.len();
+
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of("history_panel"),
+                egui::ViewportBuilder::default()
+                    .with_title("Solver History")
+                    .with_inner_size([260.0_f32, 340.0]),
+                |ctx, _class| {
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        history_closed = true;
+                    }
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{total} moves"));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("Clear").clicked() {
+                                        clear_history = true;
+                                    }
+                                },
+                            );
+                        });
+                        ui.separator();
+
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                for (i, entry) in history_slice.iter().enumerate() {
+                                    let color = if entry.starts_with("Flag") {
+                                        egui::Color32::from_rgb(255, 140, 0)
+                                    } else {
+                                        egui::Color32::LIGHT_GREEN
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("{:>4}. {entry}", i + 1))
+                                            .color(color)
+                                            .monospace()
+                                            .size(11.0),
+                                    );
+                                }
+                            });
+                    });
+                },
+            );
+
+            if history_closed {
+                self.show_history_panel = false;
+            }
+        }
+
+        // ── Apply deferred actions ───────────────────────────────────────────
+        if clear_history {
+            self.action_history.clear();
+        }
+        if do_toggle_auto {
+            self.solver_auto_play = !self.solver_auto_play;
+            if self.solver_auto_play {
+                self.last_solver_step = Instant::now();
+            }
+        }
+        if do_step && can_step {
+            let action = self.solver.get_next_move(&self.board);
+            if let Some(desc) = apply_action(&mut self.board, &action) {
+                let rule = self.solver.state.current_rule.clone();
+                self.action_history.push(format!("{desc}  [{rule}]"));
+            }
         }
 
         // ── Top panel ────────────────────────────────────────────────────────
@@ -303,140 +492,7 @@ impl eframe::App for MinesweeperApp {
             });
         });
 
-        // ── Solver control window ─────────────────────────────────────────────
-        // Rendered as a free-floating egui::Window so it never overlaps the grid.
-        if self.show_solver_panel {
-            egui::Window::new("🤖 Auto-Solver")
-                .resizable(false)
-                .collapsible(true)
-                // Default to top-right corner; user can drag it anywhere.
-                .default_pos(egui::pos2(ctx.screen_rect().right() + 10.0, 80.0))
-                .show(ctx, |ui| {
-                    // Current rule / status
-                    let rule_text = if self.solver.state.current_rule.is_empty() {
-                        "Idle".to_string()
-                    } else {
-                        self.solver.state.current_rule.clone()
-                    };
-                    ui.label(egui::RichText::new(format!("Rule: {rule_text}")).italics());
-                    ui.separator();
-
-                    // Controls row
-                    ui.horizontal(|ui| {
-                        let can_step = self.board.state == GameState::Playing;
-                        if ui
-                            .add_enabled(can_step, egui::Button::new("⏭ Step"))
-                            .clicked()
-                        {
-                            let action = self.solver.get_next_move(&self.board);
-                            if let Some(desc) = apply_action(&mut self.board, &action) {
-                                let rule = self.solver.state.current_rule.clone();
-                                self.action_history.push(format!("{desc}  [{rule}]"));
-                            }
-                        }
-
-                        let auto_label = if self.solver_auto_play {
-                            "⏸ Pause"
-                        } else {
-                            "▶ Auto-Play"
-                        };
-                        if ui
-                            .add_enabled(can_step, egui::Button::new(auto_label))
-                            .clicked()
-                        {
-                            self.solver_auto_play = !self.solver_auto_play;
-                            if self.solver_auto_play {
-                                self.last_solver_step = Instant::now();
-                            }
-                        }
-                    });
-
-                    ui.separator();
-
-                    // Speed slider
-                    ui.horizontal(|ui| {
-                        ui.label("Speed:");
-                        let mut speed_ms = self.solver_speed_ms as f32;
-                        ui.add(
-                            egui::Slider::new(&mut speed_ms, 50.0..=2000.0)
-                                .suffix(" ms")
-                                .logarithmic(true),
-                        );
-                        self.solver_speed_ms = speed_ms as u64;
-                    });
-
-                    ui.separator();
-
-                    // Probability mode selector
-                    ui.label("Probabilities:");
-                    ui.radio_value(&mut self.probability_mode, ProbabilityMode::Off, "Off");
-                    ui.radio_value(
-                        &mut self.probability_mode,
-                        ProbabilityMode::WhenInUse,
-                        "Show when in use",
-                    );
-                    ui.radio_value(
-                        &mut self.probability_mode,
-                        ProbabilityMode::Always,
-                        "Always show",
-                    );
-
-                    ui.separator();
-
-                    let highlight_count = self.solver.state.highlighted_cells.len();
-                    if highlight_count > 0 {
-                        ui.label(
-                            egui::RichText::new(format!("Evaluating {highlight_count} cells"))
-                                .color(egui::Color32::YELLOW),
-                        );
-                    }
-                });
-        }
-
-        // ── History window ────────────────────────────────────────────────────
-        if self.show_history_panel {
-            egui::Window::new("📜 Solver History")
-                .resizable(true)
-                .collapsible(true)
-                .default_pos(egui::pos2(ctx.screen_rect().right() + 10.0, 280.0))
-                .default_size([220.0, 300.0])
-                .show(ctx, |ui| {
-                    let total = self.action_history.len();
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{total} moves"));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Clear").clicked() {
-                                self.action_history.clear();
-                            }
-                        });
-                    });
-                    ui.separator();
-
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            for (i, entry) in self.action_history.iter().enumerate() {
-                                let color = if entry.starts_with("Flag") {
-                                    egui::Color32::from_rgb(255, 140, 0)
-                                } else {
-                                    egui::Color32::LIGHT_GREEN
-                                };
-                                ui.label(
-                                    egui::RichText::new(format!("{:>4}. {entry}", i + 1))
-                                        .color(color)
-                                        .monospace()
-                                        .size(11.0),
-                                );
-                            }
-                        });
-                });
-        }
-
         // ── Resolve probability map for this frame ────────────────────────────
-        // Always mode: re-compute every frame from scratch to reflect manual moves.
-        // WhenInUse mode: use whatever the solver last stored.
-        // Off mode: empty map.
         let probabilities: HashMap<(usize, usize), f32> = match self.probability_mode {
             ProbabilityMode::Off => HashMap::new(),
             ProbabilityMode::WhenInUse => self.solver.state.probabilities.clone(),
@@ -466,7 +522,6 @@ impl eframe::App for MinesweeperApp {
                             for x in 0..self.board.width {
                                 let cell = self.board.get_cell(x, y).unwrap();
 
-                                // ── Cell text & base color ────────────────
                                 let (text, text_color) = match cell.state {
                                     CellState::Hidden => {
                                         ("   ".to_string(), egui::Color32::from_gray(200))
@@ -488,7 +543,6 @@ impl eframe::App for MinesweeperApp {
                                     }
                                 };
 
-                                // ── Fill colour ───────────────────────────
                                 let is_highlighted = highlighted.contains(&(x, y));
                                 let is_next = matches!(&next_action,
                                     SolverAction::Reveal(tx, ty) | SolverAction::Flag(tx, ty)
@@ -512,7 +566,7 @@ impl eframe::App for MinesweeperApp {
 
                                 let response = ui.add(button);
 
-                                // ── Probability overlay ───────────────────
+                                // Probability overlay
                                 if cell.state == CellState::Hidden
                                     && let Some(&prob) = probabilities.get(&(x, y))
                                 {
@@ -527,7 +581,7 @@ impl eframe::App for MinesweeperApp {
                                     );
                                 }
 
-                                // ── Click handlers ────────────────────────
+                                // Click handlers
                                 if self.board.state == GameState::Playing {
                                     if response.clicked() {
                                         self.board.reveal(x, y);
@@ -550,7 +604,10 @@ impl eframe::App for MinesweeperApp {
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_min_inner_size([200.0, 200.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_min_inner_size([200.0, 200.0])
+            // Enable multi-viewport so child windows can pop out.
+            .with_app_id("rusty-mines"),
         ..Default::default()
     };
 

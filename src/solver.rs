@@ -279,7 +279,7 @@ impl Solver {
             }
         }
 
-        // Refine using each revealed numbered cell's local constraint.
+        // Pass 1 – local probability estimate (conservative max blend).
         for y in 0..board.height {
             for x in 0..board.width {
                 let cell = match board.get_cell(x, y) {
@@ -314,10 +314,61 @@ impl Solver {
                 let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
                 let local_prob = effective as f32 / hidden.len() as f32;
                 for pos in &hidden {
-                    probs.entry(*pos).and_modify(|p| {
-                        // Blend: conservative maximum heuristic.
-                        *p = p.max(local_prob);
-                    });
+                    probs.entry(*pos).and_modify(|p| *p = p.max(local_prob));
+                }
+            }
+        }
+
+        // Pass 2 – definitive override: satisfied / fully-constrained cells.
+        //
+        // The max-blend in pass 1 can never reduce a cell's estimate to 0 %.
+        // This pass corrects that: if a revealed numbered cell has all its mines
+        // accounted for by flags (effective == 0), every remaining hidden
+        // neighbour is provably SAFE (0 %).  Conversely, if every hidden
+        // neighbour must be a mine (effective == hidden count), they are 100 %.
+        for y in 0..board.height {
+            for x in 0..board.width {
+                let cell = match board.get_cell(x, y) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
+                    continue;
+                }
+                let neighbours = get_neighbours(board, x, y);
+                let flag_count = neighbours
+                    .iter()
+                    .filter(|&&(nx, ny)| {
+                        board
+                            .get_cell(nx, ny)
+                            .is_some_and(|c| c.state == CellState::Flagged)
+                    })
+                    .count();
+                let hidden: Vec<_> = neighbours
+                    .iter()
+                    .filter(|&&(nx, ny)| {
+                        board
+                            .get_cell(nx, ny)
+                            .is_some_and(|c| c.state == CellState::Hidden)
+                    })
+                    .cloned()
+                    .collect();
+
+                if hidden.is_empty() {
+                    continue;
+                }
+                let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+
+                if effective == 0 {
+                    // All mines flagged → hidden neighbours are definitely safe.
+                    for pos in &hidden {
+                        probs.insert(*pos, 0.0);
+                    }
+                } else if effective == hidden.len() {
+                    // Every hidden neighbour must be a mine.
+                    for pos in &hidden {
+                        probs.insert(*pos, 1.0);
+                    }
                 }
             }
         }
