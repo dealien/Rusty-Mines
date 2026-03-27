@@ -1,10 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use rusty_mines::minesweeper::{Board, CellState, GameState};
 use rusty_mines::solver::{Solver, SolverAction};
+
+// ─── Probability display mode ─────────────────────────────────────────────────
+
+/// Controls when mine-probability numbers are shown on hidden cells.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ProbabilityMode {
+    /// Never display probabilities.
+    Off,
+    /// Only display probabilities when the solver has computed a move (i.e. the
+    /// solver was last stepped or auto-played and its state is populated).
+    WhenInUse,
+    /// Always display probabilities, re-computing on every frame so they stay
+    /// current after manual moves or flags.
+    Always,
+}
 
 // ─── Application State ───────────────────────────────────────────────────────
 
@@ -22,7 +38,11 @@ struct MinesweeperApp {
     solver_speed_ms: u64, // milliseconds between auto-play steps
     last_solver_step: Instant,
     show_solver_panel: bool,
-    show_probabilities: bool,
+    show_history_panel: bool,
+    probability_mode: ProbabilityMode,
+
+    // History log
+    action_history: Vec<String>,
 }
 
 impl Default for MinesweeperApp {
@@ -42,7 +62,10 @@ impl Default for MinesweeperApp {
             solver_speed_ms: 300,
             last_solver_step: Instant::now(),
             show_solver_panel: true,
-            show_probabilities: true,
+            show_history_panel: true,
+            probability_mode: ProbabilityMode::WhenInUse,
+
+            action_history: Vec::new(),
         }
     }
 }
@@ -61,6 +84,114 @@ fn get_color(mines: u8) -> egui::Color32 {
         8 => egui::Color32::GRAY,
         _ => egui::Color32::WHITE,
     }
+}
+
+/// Map a mine-probability (0.0–1.0) to a display colour for the overlay text.
+fn probability_color(prob: f32) -> egui::Color32 {
+    // Green (safe) → yellow → red (dangerous)
+    let r = (prob * 2.0 * 255.0).min(255.0) as u8;
+    let g = ((1.0 - prob) * 2.0 * 255.0).min(255.0) as u8;
+    egui::Color32::from_rgb(r, g, 60)
+}
+
+/// Apply a [`SolverAction`] returned by the solver to the board.
+/// Returns a human-readable description for the history log.
+fn apply_action(board: &mut Board, action: &SolverAction) -> Option<String> {
+    match *action {
+        SolverAction::Reveal(x, y) => {
+            board.reveal(x, y);
+            Some(format!("Reveal  ({x}, {y})"))
+        }
+        SolverAction::Flag(x, y) => {
+            if let Some(cell) = board.get_cell(x, y)
+                && cell.state == CellState::Hidden
+            {
+                board.toggle_flag(x, y);
+                return Some(format!("Flag    ({x}, {y})"));
+            }
+            None
+        }
+        SolverAction::None => None,
+    }
+}
+
+/// Compute per-cell mine probabilities directly from the board without
+/// running the full solver pipeline. Used for "Always" mode so probabilities
+/// stay current after manual moves.
+fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
+    let total_hidden = board
+        .cells
+        .iter()
+        .filter(|c| c.state == CellState::Hidden)
+        .count();
+    let flagged_count = board
+        .cells
+        .iter()
+        .filter(|c| c.state == CellState::Flagged)
+        .count();
+    let remaining_mines = board.num_mines.saturating_sub(flagged_count);
+
+    if total_hidden == 0 {
+        return HashMap::new();
+    }
+
+    let global_prob = remaining_mines as f32 / total_hidden as f32;
+    let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
+
+    for y in 0..board.height {
+        for x in 0..board.width {
+            if let Some(cell) = board.get_cell(x, y)
+                && cell.state == CellState::Hidden
+            {
+                probs.insert((x, y), global_prob);
+            }
+        }
+    }
+
+    // Refine using each revealed numbered cell.
+    for y in 0..board.height {
+        for x in 0..board.width {
+            let cell = match board.get_cell(x, y) {
+                Some(c) => c,
+                None => continue,
+            };
+            if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
+                continue;
+            }
+            let mut flag_count = 0usize;
+            let mut hidden_neighbours: Vec<(usize, usize)> = Vec::new();
+
+            for dy in -1_i32..=1 {
+                for dx in -1_i32..=1 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32 {
+                        let nx = nx as usize;
+                        let ny = ny as usize;
+                        match board.get_cell(nx, ny).map(|c| c.state) {
+                            Some(CellState::Flagged) => flag_count += 1,
+                            Some(CellState::Hidden) => hidden_neighbours.push((nx, ny)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            if hidden_neighbours.is_empty() {
+                continue;
+            }
+            let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+            let local_prob = effective as f32 / hidden_neighbours.len() as f32;
+            for pos in &hidden_neighbours {
+                probs.entry(*pos).and_modify(|p| *p = p.max(local_prob));
+            }
+        }
+    }
+
+    probs
 }
 
 // ─── App ─────────────────────────────────────────────────────────────────────
@@ -96,13 +227,15 @@ impl eframe::App for MinesweeperApp {
             let elapsed = self.last_solver_step.elapsed();
             if elapsed >= Duration::from_millis(self.solver_speed_ms) {
                 let action = self.solver.get_next_move(&self.board);
-                apply_action(&mut self.board, &action);
+                if let Some(desc) = apply_action(&mut self.board, &action) {
+                    let rule = self.solver.state.current_rule.clone();
+                    self.action_history.push(format!("{desc}  [{rule}]"));
+                }
                 self.last_solver_step = Instant::now();
                 if action == SolverAction::None {
-                    self.solver_auto_play = false; // nothing to do
+                    self.solver_auto_play = false;
                 }
             }
-            // Keep repainting so auto-play continues.
             ctx.request_repaint_after(Duration::from_millis(self.solver_speed_ms));
         }
 
@@ -129,8 +262,10 @@ impl eframe::App for MinesweeperApp {
                             );
                             self.solver.state.clear();
                             self.solver_auto_play = false;
+                            self.action_history.clear();
                         }
                         ui.separator();
+                        ui.toggle_value(&mut self.show_history_panel, "📜 History");
                         ui.toggle_value(&mut self.show_solver_panel, "🤖 Solver");
                     });
                 });
@@ -162,19 +297,22 @@ impl eframe::App for MinesweeperApp {
                         self.board = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines);
                         self.solver.state.clear();
                         self.solver_auto_play = false;
+                        self.action_history.clear();
                     }
                 });
             });
         });
 
         // ── Solver control window ─────────────────────────────────────────────
+        // Rendered as a free-floating egui::Window so it never overlaps the grid.
         if self.show_solver_panel {
             egui::Window::new("🤖 Auto-Solver")
                 .resizable(false)
                 .collapsible(true)
-                .default_pos([10.0, 120.0])
+                // Default to top-right corner; user can drag it anywhere.
+                .default_pos(egui::pos2(ctx.screen_rect().right() + 10.0, 80.0))
                 .show(ctx, |ui| {
-                    // Status line
+                    // Current rule / status
                     let rule_text = if self.solver.state.current_rule.is_empty() {
                         "Idle".to_string()
                     } else {
@@ -183,7 +321,7 @@ impl eframe::App for MinesweeperApp {
                     ui.label(egui::RichText::new(format!("Rule: {rule_text}")).italics());
                     ui.separator();
 
-                    // Manual controls
+                    // Controls row
                     ui.horizontal(|ui| {
                         let can_step = self.board.state == GameState::Playing;
                         if ui
@@ -191,7 +329,10 @@ impl eframe::App for MinesweeperApp {
                             .clicked()
                         {
                             let action = self.solver.get_next_move(&self.board);
-                            apply_action(&mut self.board, &action);
+                            if let Some(desc) = apply_action(&mut self.board, &action) {
+                                let rule = self.solver.state.current_rule.clone();
+                                self.action_history.push(format!("{desc}  [{rule}]"));
+                            }
                         }
 
                         let auto_label = if self.solver_auto_play {
@@ -226,8 +367,22 @@ impl eframe::App for MinesweeperApp {
 
                     ui.separator();
 
-                    // Visualization toggles
-                    ui.checkbox(&mut self.show_probabilities, "Show probabilities");
+                    // Probability mode selector
+                    ui.label("Probabilities:");
+                    ui.radio_value(&mut self.probability_mode, ProbabilityMode::Off, "Off");
+                    ui.radio_value(
+                        &mut self.probability_mode,
+                        ProbabilityMode::WhenInUse,
+                        "Show when in use",
+                    );
+                    ui.radio_value(
+                        &mut self.probability_mode,
+                        ProbabilityMode::Always,
+                        "Always show",
+                    );
+
+                    ui.separator();
+
                     let highlight_count = self.solver.state.highlighted_cells.len();
                     if highlight_count > 0 {
                         ui.label(
@@ -238,8 +393,57 @@ impl eframe::App for MinesweeperApp {
                 });
         }
 
-        // ── Central panel – grid ─────────────────────────────────────────────
-        // Snapshot visualisation data so we don't borrow self inside the closure.
+        // ── History window ────────────────────────────────────────────────────
+        if self.show_history_panel {
+            egui::Window::new("📜 Solver History")
+                .resizable(true)
+                .collapsible(true)
+                .default_pos(egui::pos2(ctx.screen_rect().right() + 10.0, 280.0))
+                .default_size([220.0, 300.0])
+                .show(ctx, |ui| {
+                    let total = self.action_history.len();
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{total} moves"));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Clear").clicked() {
+                                self.action_history.clear();
+                            }
+                        });
+                    });
+                    ui.separator();
+
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for (i, entry) in self.action_history.iter().enumerate() {
+                                let color = if entry.starts_with("Flag") {
+                                    egui::Color32::from_rgb(255, 140, 0)
+                                } else {
+                                    egui::Color32::LIGHT_GREEN
+                                };
+                                ui.label(
+                                    egui::RichText::new(format!("{:>4}. {entry}", i + 1))
+                                        .color(color)
+                                        .monospace()
+                                        .size(11.0),
+                                );
+                            }
+                        });
+                });
+        }
+
+        // ── Resolve probability map for this frame ────────────────────────────
+        // Always mode: re-compute every frame from scratch to reflect manual moves.
+        // WhenInUse mode: use whatever the solver last stored.
+        // Off mode: empty map.
+        let probabilities: HashMap<(usize, usize), f32> = match self.probability_mode {
+            ProbabilityMode::Off => HashMap::new(),
+            ProbabilityMode::WhenInUse => self.solver.state.probabilities.clone(),
+            ProbabilityMode::Always => compute_probabilities(&self.board),
+        };
+
+        // ── Central panel – grid ──────────────────────────────────────────────
         let highlighted: std::collections::HashSet<(usize, usize)> = self
             .solver
             .state
@@ -247,8 +451,6 @@ impl eframe::App for MinesweeperApp {
             .iter()
             .cloned()
             .collect();
-        let probabilities = self.solver.state.probabilities.clone();
-        let show_probs = self.show_probabilities;
         let next_action = self.solver.state.next_action.clone();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -286,17 +488,15 @@ impl eframe::App for MinesweeperApp {
                                     }
                                 };
 
-                                // ── Fill colour (resolved vs highlighted) ─
+                                // ── Fill colour ───────────────────────────
                                 let is_highlighted = highlighted.contains(&(x, y));
                                 let is_next = matches!(&next_action,
                                     SolverAction::Reveal(tx, ty) | SolverAction::Flag(tx, ty)
                                     if *tx == x && *ty == y);
 
                                 let fill_color = if is_next {
-                                    // The cell about to be acted on: bright accent
                                     egui::Color32::from_rgb(255, 180, 0)
                                 } else if is_highlighted {
-                                    // Cells being evaluated: subtle green tint
                                     egui::Color32::from_rgb(40, 100, 60)
                                 } else if cell.state == CellState::Revealed && !cell.is_mine {
                                     egui::Color32::from_gray(30)
@@ -312,19 +512,20 @@ impl eframe::App for MinesweeperApp {
 
                                 let response = ui.add(button);
 
-                                // ── Probability overlay on hidden cells ───
-                                if show_probs && cell.state == CellState::Hidden
-                                    && let Some(&prob) = probabilities.get(&(x, y)) {
-                                        let pct = (prob * 100.0).round() as u32;
-                                        let prob_color = probability_color(prob);
-                                        ui.painter().text(
-                                            response.rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            format!("{pct}%"),
-                                            egui::FontId::proportional(9.0),
-                                            prob_color,
-                                        );
-                                    }
+                                // ── Probability overlay ───────────────────
+                                if cell.state == CellState::Hidden
+                                    && let Some(&prob) = probabilities.get(&(x, y))
+                                {
+                                    let pct = (prob * 100.0).round() as u32;
+                                    let prob_color = probability_color(prob);
+                                    ui.painter().text(
+                                        response.rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        format!("{pct}%"),
+                                        egui::FontId::proportional(9.0),
+                                        prob_color,
+                                    );
+                                }
 
                                 // ── Click handlers ────────────────────────
                                 if self.board.state == GameState::Playing {
@@ -343,31 +544,6 @@ impl eframe::App for MinesweeperApp {
             });
         });
     }
-}
-
-// ─── Action applicator ───────────────────────────────────────────────────────
-
-/// Apply a [`SolverAction`] returned by the solver to the board.
-fn apply_action(board: &mut Board, action: &SolverAction) {
-    match *action {
-        SolverAction::Reveal(x, y) => board.reveal(x, y),
-        SolverAction::Flag(x, y) => {
-            // Only flag if the cell is currently hidden.
-            if let Some(cell) = board.get_cell(x, y)
-                && cell.state == CellState::Hidden {
-                    board.toggle_flag(x, y);
-                }
-        }
-        SolverAction::None => {}
-    }
-}
-
-/// Map a mine-probability (0.0–1.0) to a display colour for the overlay text.
-fn probability_color(prob: f32) -> egui::Color32 {
-    // Green (safe) → yellow → red (dangerous)
-    let r = (prob * 2.0 * 255.0).min(255.0) as u8;
-    let g = ((1.0 - prob) * 2.0 * 255.0).min(255.0) as u8;
-    egui::Color32::from_rgb(r, g, 60)
 }
 
 // ─── Entry point ─────────────────────────────────────────────────────────────

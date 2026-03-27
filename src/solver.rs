@@ -6,8 +6,7 @@ use crate::minesweeper::{Board, CellState};
 type Constraint = (usize, usize, usize, HashSet<(usize, usize)>);
 
 /// An action the solver wants the game loop to apply to the board.
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum SolverAction {
     /// Safely reveal this cell.
     Reveal(usize, usize),
@@ -17,7 +16,6 @@ pub enum SolverAction {
     #[default]
     None,
 }
-
 
 /// Transient state the solver produces for visual "thought process" rendering.
 #[derive(Debug, Clone, Default)]
@@ -274,9 +272,10 @@ impl Solver {
         for y in 0..board.height {
             for x in 0..board.width {
                 if let Some(cell) = board.get_cell(x, y)
-                    && cell.state == CellState::Hidden {
-                        probs.insert((x, y), global_prob);
-                    }
+                    && cell.state == CellState::Hidden
+                {
+                    probs.insert((x, y), global_prob);
+                }
             }
         }
 
@@ -409,10 +408,7 @@ mod tests {
                         }
                         let nx = cx as i32 + dx;
                         let ny = cy as i32 + dy;
-                        if nx >= 0
-                            && nx < board.width as i32
-                            && ny >= 0
-                            && ny < board.height as i32
+                        if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32
                         {
                             let n_idx = board.index(nx as usize, ny as usize);
                             if board.cells[n_idx].is_mine {
