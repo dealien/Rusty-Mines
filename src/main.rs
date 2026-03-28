@@ -561,7 +561,8 @@ impl eframe::App for MinesweeperApp {
         });
 
         // ── Resolve probability map for this frame ────────────────────────────
-        let probabilities: HashMap<(usize, usize), f32> = if self.board.state != GameState::Playing {
+        let probabilities: HashMap<(usize, usize), f32> = if self.board.state != GameState::Playing
+        {
             HashMap::new()
         } else {
             match self.probability_mode {
