@@ -317,13 +317,14 @@ impl eframe::App for MinesweeperApp {
         if self.show_solver_panel {
             let speed_ms = &mut self.solver_speed_ms;
             let prob_mode = &mut self.probability_mode;
+            let settings = &mut self.solver.settings;
 
             ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("solver_panel"),
                 egui::ViewportBuilder::default()
                     .with_title("Auto-Solver")
                     .with_resizable(false)
-                    .with_inner_size([300.0_f32, 240.0]),
+                    .with_inner_size([300.0_f32, 380.0]),
                 |ctx, _class| {
                     if ctx.input(|i| i.viewport().close_requested()) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -369,6 +370,13 @@ impl eframe::App for MinesweeperApp {
                             );
                             *speed_ms = spd as u64;
                         });
+
+                        ui.separator();
+
+                        ui.label("Logic Tiers:");
+                        ui.checkbox(&mut settings.use_standard, "Standard Deduction");
+                        ui.checkbox(&mut settings.use_subset, "Subset Patterns");
+                        ui.checkbox(&mut settings.use_probability, "Probability/Heuristic");
 
                         ui.separator();
 

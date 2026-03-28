@@ -30,6 +30,27 @@ pub struct SolverState {
     pub next_action: SolverAction,
 }
 
+/// Configuration toggles for enabling/disabling different solver deduction tiers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SolverSettings {
+    /// Rule 1: Standard single-cell deduction.
+    pub use_standard: bool,
+    /// Rule 2: Pattern-based deduction (e.g. 1-1, 1-2).
+    pub use_subset: bool,
+    /// Rule 3: Iterative probability/heuristic logic.
+    pub use_probability: bool,
+}
+
+impl Default for SolverSettings {
+    fn default() -> Self {
+        Self {
+            use_standard: true,
+            use_subset: true,
+            use_probability: true,
+        }
+    }
+}
+
 impl SolverState {
     /// Reset transient visualisation data between solver steps.
     pub fn clear(&mut self) {
@@ -49,6 +70,8 @@ impl SolverState {
 pub struct Solver {
     /// Public state used by the UI for visualisation.
     pub state: SolverState,
+    /// Toggleable options for the solver's deduction engine.
+    pub settings: SolverSettings,
 }
 
 impl Solver {
@@ -73,24 +96,34 @@ impl Solver {
     /// let mut solver = Solver::new();
     /// let action = solver.get_next_move(&board);
     /// ```
+    /// ```
+    #[allow(clippy::collapsible_if)]
     pub fn get_next_move(&mut self, board: &Board) -> SolverAction {
         self.state.clear();
 
-        // Try each rule tier in order from cheapest to most expensive.
-        if let Some(action) = self.apply_standard_deduction(board) {
+        // Try each rule tier in order if enabled in settings.
+        if self.settings.use_standard {
+            if let Some(action) = self.apply_standard_deduction(board) {
+                self.state.next_action = action.clone();
+                return action;
+            }
+        }
+
+        if self.settings.use_subset {
+            if let Some(action) = self.apply_pattern_matching(board) {
+                self.state.next_action = action.clone();
+                return action;
+            }
+        }
+
+        // Fall back to probability heuristic if enabled.
+        if self.settings.use_probability {
+            let action = self.apply_probability_guess(board);
             self.state.next_action = action.clone();
             return action;
         }
 
-        if let Some(action) = self.apply_pattern_matching(board) {
-            self.state.next_action = action.clone();
-            return action;
-        }
-
-        // Nothing certain – fall back to a probability-based guess.
-        let action = self.apply_probability_guess(board);
-        self.state.next_action = action.clone();
-        action
+        SolverAction::None
     }
 
     // -----------------------------------------------------------------------
@@ -538,5 +571,30 @@ mod tests {
         let _ = solver.get_next_move(&board);
         // State is re-populated each call, not accumulated.
         assert!(!first_rule.is_empty());
+    }
+
+    #[test]
+    fn test_settings_disable_rule() {
+        let mut board = make_test_board();
+        // Reveal enough cells so (0,0) is the only hidden neighbour of (1,0).
+        board.reveal(1, 0);
+        board.reveal(0, 1);
+        board.reveal(1, 1);
+        board.reveal(2, 0);
+        board.reveal(2, 1);
+
+        let mut solver = Solver::new();
+        // 1. All enabled -> should Flag(0,0) via standard deduction.
+        let action = solver.get_next_move(&board);
+        assert!(matches!(action, SolverAction::Flag(0, 0)));
+
+        // 2. Disable standard deduction -> should Reveal something else (guess) or do nothing.
+        // On an empty-ish board, probability heuristic will pick a Reveal.
+        solver.settings.use_standard = false;
+        let action = solver.get_next_move(&board);
+        assert!(
+            !matches!(action, SolverAction::Flag(0, 0)),
+            "Expected NOT to flag (0,0) when standard deduction is disabled, got {action:?}"
+        );
     }
 }

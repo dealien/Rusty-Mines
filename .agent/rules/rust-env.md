@@ -81,3 +81,4 @@ Learnings are separated by language, one file per language, all under `.agent/le
 - **Docstrings**: Every new or modified public function, struct, enum, and trait must have a `///` doc comment. Include an `# Examples` section where applicable.
 - **Testing**: Add unit tests in an inline `#[cfg(test)]` module for all new functions. Add integration tests under `tests/` for new public API surface.
 - **Error Handling**: Use `Result` and `?` propagation — avoid `unwrap()` and `expect()` outside of tests and examples unless explicitly justified with a comment.
+- **Comments**: Line comments should be used to explain key lines and sections of code, such as loops or function calls.
