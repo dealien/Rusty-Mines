@@ -433,9 +433,48 @@ impl Solver {
         self.state.probabilities = probs.clone();
 
         // Pick the hidden cell with the lowest mine probability.
-        let best = probs
-            .iter()
-            .min_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Pick the best hidden cell candidate.
+        //
+        // We prioritize:
+        // 1. **Lowest Mine Probability** (lower risk first)
+        // 2. **Highest Hidden Neighbors** (higher information yield first)
+        // 3. **Coordinates** (deterministically chooses top-most, then left-most)
+        let best = probs.iter().min_by(|(pos_a, prob_a), (pos_b, prob_b)| {
+            let (ax, ay) = **pos_a;
+            let a_prob = **prob_a;
+            let (bx, by) = **pos_b;
+            let b_prob = **prob_b;
+
+            a_prob
+                .partial_cmp(&b_prob)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    // Tie-break 1: Most hidden neighbours (information yield).
+                    let a_hidden = get_neighbours(board, ax, ay)
+                        .iter()
+                        .filter(|&&(nx, ny)| {
+                            board
+                                .get_cell(nx, ny)
+                                .is_some_and(|c| c.state == CellState::Hidden)
+                        })
+                        .count();
+                    let b_hidden = get_neighbours(board, bx, by)
+                        .iter()
+                        .filter(|&&(nx, ny)| {
+                            board
+                                .get_cell(nx, ny)
+                                .is_some_and(|c| c.state == CellState::Hidden)
+                        })
+                        .count();
+
+                    // Compare descending (B to A).
+                    b_hidden.cmp(&a_hidden)
+                })
+                .then_with(|| {
+                    // Tie-break 2: Coordinates (y, x) for perfect determinism.
+                    ay.cmp(&by).then(ax.cmp(&bx))
+                })
+        });
 
         match best {
             Some((&(bx, by), _)) => SolverAction::Reveal(bx, by),
@@ -571,6 +610,43 @@ mod tests {
         let _ = solver.get_next_move(&board);
         // State is re-populated each call, not accumulated.
         assert!(!first_rule.is_empty());
+    }
+
+    #[test]
+    fn test_tie_break_prefers_interior() {
+        // Simple 5x5 board, no mines, no revealed cells.
+        // Every cell has 0% probability.
+        // Corner (0,0) has 3 hidden neighbors.
+        // Interior (2,2) has 8 hidden neighbors.
+        // The solver should pick an interior cell.
+        let board = Board::new(5, 5, 0);
+        let mut solver = Solver::new();
+        let action = solver.get_next_move(&board);
+
+        if let SolverAction::Reveal(x, y) = action {
+            // Interior cells are at (1..4, 1..4).
+            // A corner or edge would have < 8 neighbours.
+            let hidden_count = get_neighbours(&board, x, y).len();
+            assert_eq!(
+                hidden_count, 8,
+                "Expected solver to pick an interior cell with 8 neighbours, but got ({x},{y}) with {hidden_count}"
+            );
+        } else {
+            panic!("Expected Reveal action, got {action:?}");
+        }
+    }
+
+    #[test]
+    fn test_tie_break_determinism() {
+        // Two identical scenarios should produce the same first move.
+        let board1 = Board::new(10, 10, 10);
+        let board2 = Board::new(10, 10, 10);
+        let mut solver = Solver::new();
+
+        let move1 = solver.get_next_move(&board1);
+        let move2 = solver.get_next_move(&board2);
+
+        assert_eq!(move1, move2, "Tie-breaking must be deterministic");
     }
 
     #[test]
