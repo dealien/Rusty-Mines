@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Rust Learnings – Rusty-Mines
 
 ## 2026-03-27 – Borrow Checker and `board.index()` in Tests
