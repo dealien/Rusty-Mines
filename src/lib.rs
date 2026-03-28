@@ -4,3 +4,4 @@
 //! management, mine placement, and game state transitions.
 
 pub mod minesweeper;
+pub mod solver;
