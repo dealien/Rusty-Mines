@@ -3,7 +3,7 @@ use rusty_mines::minesweeper::{Board, CellState, GameState};
 #[test]
 fn test_complex_game_flow() {
     // 1. Initialize a small 5x5 board with 5 mines
-    let mut board = Board::new(5, 5, 5);
+    let mut board = Board::new(5, 5, 5).unwrap();
     assert_eq!(board.state, GameState::Playing);
 
     // 2. Perform first click at (0,0).
@@ -32,7 +32,7 @@ fn test_complex_game_flow() {
 #[test]
 fn test_win_condition_no_mines() {
     // Create a board with 0 mines. Revealing any cell should trigger a win if it clears the board.
-    let mut board = Board::new(3, 3, 0);
+    let mut board = Board::new(3, 3, 0).unwrap();
     board.reveal(1, 1);
 
     // Since there are no mines, the first click reveals (1,1) and flood-fills the rest.

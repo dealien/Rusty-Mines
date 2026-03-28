@@ -21,6 +21,9 @@ pub enum GameState {
     Lost,
 }
 
+pub const MAX_WIDTH: usize = 50;
+pub const MAX_HEIGHT: usize = 50;
+
 pub struct Board {
     pub width: usize,
     pub height: usize,
@@ -37,28 +40,37 @@ impl Board {
     ///
     /// ```
     /// use rusty_mines::minesweeper::Board;
-    /// let board = Board::new(10, 10, 15);
+    /// let board = Board::new(10, 10, 15).unwrap();
     /// assert_eq!(board.width, 10);
     /// assert_eq!(board.num_mines, 15);
     /// ```
-    pub fn new(width: usize, height: usize, num_mines: usize) -> Self {
+    pub fn new(width: usize, height: usize, num_mines: usize) -> Option<Self> {
+        if width == 0 || height == 0 || width > MAX_WIDTH || height > MAX_HEIGHT {
+            return None;
+        }
+
+        let size = width.checked_mul(height)?;
+        if num_mines >= size {
+            return None;
+        }
+
         let cells = vec![
             Cell {
                 is_mine: false,
                 adjacent_mines: 0,
                 state: CellState::Hidden,
             };
-            width * height
+            size
         ];
 
-        Self {
+        Some(Self {
             width,
             height,
             cells,
             num_mines,
             state: GameState::Playing,
             first_click: true,
-        }
+        })
     }
 
     // Getting the 1D index from 2D coordinates
@@ -241,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_board_initialization() {
-        let board = Board::new(10, 10, 15);
+        let board = Board::new(10, 10, 15).unwrap();
         assert_eq!(board.width, 10);
         assert_eq!(board.height, 10);
         assert_eq!(board.cells.len(), 100);
@@ -252,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_first_click_places_mines() {
-        let mut board = Board::new(5, 5, 5);
+        let mut board = Board::new(5, 5, 5).unwrap();
         board.reveal(2, 2);
         assert!(!board.first_click);
 
@@ -273,10 +285,29 @@ mod tests {
 
     #[test]
     fn test_flagging() {
-        let mut board = Board::new(5, 5, 0);
+        let mut board = Board::new(5, 5, 0).unwrap();
         board.toggle_flag(1, 1);
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Flagged);
         board.toggle_flag(1, 1);
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Hidden);
+    }
+
+    #[test]
+    fn test_invalid_board_parameters() {
+        // Zero dimensions
+        assert!(Board::new(0, 10, 5).is_none());
+        assert!(Board::new(10, 0, 5).is_none());
+        assert!(Board::new(0, 0, 0).is_none());
+
+        // Dimensions exceeding MAX_WIDTH/MAX_HEIGHT
+        assert!(Board::new(MAX_WIDTH + 1, 10, 5).is_none());
+        assert!(Board::new(10, MAX_HEIGHT + 1, 5).is_none());
+
+        // Too many mines (must be less than total cells)
+        assert!(Board::new(10, 10, 100).is_none());
+        assert!(Board::new(10, 10, 101).is_none());
+
+        // Normal board
+        assert!(Board::new(10, 10, 99).is_some());
     }
 }
