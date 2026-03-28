@@ -365,19 +365,16 @@ impl Solver {
         for region in regions {
             let mut assignment = vec![0u8; region.cells.len()];
             let mut valid_configs: Vec<Vec<u8>> = Vec::new();
-            let mut iteration_count = 0usize;
-
-            if let Err(SolveError::Timeout) = backtrack(
-                &region,
-                &mut assignment,
-                0,
-                remaining_mines,
-                0,
-                &mut valid_configs,
+            let mut ctx = SearchContext {
                 start_time,
                 timeout,
-                &mut iteration_count,
-            ) {
+                iteration_count: 0,
+                remaining_mines,
+            };
+
+            if let Err(SolveError::Timeout) =
+                backtrack(&region, &mut ctx, &mut assignment, 0, 0, &mut valid_configs)
+            {
                 // Time budget exhausted for this region; Rule 4 heuristic will take over.
                 continue;
             }
