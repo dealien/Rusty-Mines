@@ -313,6 +313,7 @@ impl eframe::App for MinesweeperApp {
         let mut solver_closed = false;
         let mut history_closed = false;
         let mut clear_history = false;
+        let mut jump_to_bottom = false;
 
         // ── Solver popup window (separate OS window) ─────────────────────────
         if self.show_solver_panel {
@@ -430,6 +431,9 @@ impl eframe::App for MinesweeperApp {
                                     if ui.small_button("Clear").clicked() {
                                         clear_history = true;
                                     }
+                                    if total > 0 && ui.small_button("⬇").clicked() {
+                                        jump_to_bottom = true;
+                                    }
                                 },
                             );
                         });
@@ -445,12 +449,15 @@ impl eframe::App for MinesweeperApp {
                                     } else {
                                         egui::Color32::LIGHT_GREEN
                                     };
-                                    ui.label(
+                                    let response = ui.label(
                                         egui::RichText::new(format!("{:>4}. {entry}", i + 1))
                                             .color(color)
                                             .monospace()
                                             .size(11.0),
                                     );
+                                    if jump_to_bottom && i == total - 1 {
+                                        response.scroll_to_me(Some(egui::Align::BOTTOM));
+                                    }
                                 }
                             });
                     });
