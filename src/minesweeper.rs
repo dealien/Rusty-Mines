@@ -84,7 +84,8 @@ impl Board {
 
         if actual_mines > 0 {
             // Collect all valid indices that can be mined
-            let mut available_indices = Vec::with_capacity(self.width * self.height - protected_cells);
+            let mut available_indices =
+                Vec::with_capacity(self.width * self.height - protected_cells);
             for y in 0..self.height {
                 for x in 0..self.width {
                     // Ensure first click and its surroundings are not mines
@@ -98,7 +99,8 @@ impl Board {
             }
 
             // Sample indices uniformly
-            let selected = rand::seq::index::sample(&mut rng, available_indices.len(), actual_mines);
+            let selected =
+                rand::seq::index::sample(&mut rng, available_indices.len(), actual_mines);
             for idx in selected.into_iter() {
                 let board_idx = available_indices[idx];
                 self.cells[board_idx].is_mine = true;
