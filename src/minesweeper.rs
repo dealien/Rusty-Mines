@@ -293,6 +293,22 @@ mod tests {
     }
 
     #[test]
+    fn test_toggle_flag_out_of_bounds() {
+        let mut board = Board::new(5, 5, 0).unwrap();
+        // Test x out of bounds
+        board.toggle_flag(5, 0);
+        // Test y out of bounds
+        board.toggle_flag(0, 5);
+        // Test both out of bounds
+        board.toggle_flag(5, 5);
+
+        // Ensure no cell state changed (all should be Hidden)
+        for cell in &board.cells {
+            assert_eq!(cell.state, CellState::Hidden);
+        }
+    }
+
+    #[test]
     fn test_invalid_board_parameters() {
         // Zero dimensions
         assert!(Board::new(0, 10, 5).is_none());

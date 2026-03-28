@@ -46,7 +46,8 @@ impl Default for MinesweeperApp {
         let height = 25;
         let mines = 100;
         Self {
-            board: Board::new(width, height, mines).unwrap_or_else(|| Board::new(10, 10, 10).unwrap()),
+            board: Board::new(width, height, mines)
+                .unwrap_or_else(|| Board::new(10, 10, 10).unwrap()),
             cfg_width: width,
             cfg_height: height,
             cfg_mines: mines,
@@ -535,23 +536,25 @@ impl eframe::App for MinesweeperApp {
                             .speed(0.1),
                     );
 
-                    if ui.button("New Game").clicked() {
-                        if let Some(new_board) = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines) {
-                            self.board = new_board;
-                            self.solver.state.clear();
-                            self.solver_auto_play = false;
-                            self.action_history.clear();
-                        }
+                    if ui.button("New Game").clicked()
+                        && let Some(new_board) =
+                            Board::new(self.cfg_width, self.cfg_height, self.cfg_mines)
+                    {
+                        self.board = new_board;
+                        self.solver.state.clear();
+                        self.solver_auto_play = false;
+                        self.action_history.clear();
                     }
 
-                    if ui.button("Solve New Game").clicked() {
-                        if let Some(new_board) = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines) {
-                            self.board = new_board;
-                            self.solver.state.clear();
-                            self.solver_auto_play = true;
-                            self.last_solver_step = Instant::now();
-                            self.action_history.clear();
-                        }
+                    if ui.button("Solve New Game").clicked()
+                        && let Some(new_board) =
+                            Board::new(self.cfg_width, self.cfg_height, self.cfg_mines)
+                    {
+                        self.board = new_board;
+                        self.solver.state.clear();
+                        self.solver_auto_play = true;
+                        self.last_solver_step = Instant::now();
+                        self.action_history.clear();
                     }
                 });
             });
