@@ -38,7 +38,7 @@ trigger: always_on
 
 ### Reading Learnings
 
-Before starting any task, read `.agent/learning/rust.md` (create if missing). This file contains accumulated learnings specific to Rust work in this codebase. Apply any relevant entries to inform your approach before writing a single line of code.
+Before starting any task, read `.agent/rules/rust-learning.md` (create if missing). This file contains accumulated learnings specific to Rust work in this codebase. Apply any relevant entries to inform your approach before writing a single line of code.
 
 ### Recording Learnings
 
