@@ -561,10 +561,14 @@ impl eframe::App for MinesweeperApp {
         });
 
         // ── Resolve probability map for this frame ────────────────────────────
-        let probabilities: HashMap<(usize, usize), f32> = match self.probability_mode {
-            ProbabilityMode::Off => HashMap::new(),
-            ProbabilityMode::WhenInUse => self.solver.state.probabilities.clone(),
-            ProbabilityMode::Always => compute_probabilities(&self.board),
+        let probabilities: HashMap<(usize, usize), f32> = if self.board.state != GameState::Playing {
+            HashMap::new()
+        } else {
+            match self.probability_mode {
+                ProbabilityMode::Off => HashMap::new(),
+                ProbabilityMode::WhenInUse => self.solver.state.probabilities.clone(),
+                ProbabilityMode::Always => compute_probabilities(&self.board),
+            }
         };
 
         // ── Central panel – grid ──────────────────────────────────────────────
