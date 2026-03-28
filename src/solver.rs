@@ -870,7 +870,7 @@ fn backtrack(
         let new_frontier_mines = frontier_mines + value as usize;
 
         // Global constraint: total assigned mines must not exceed board budget.
-        if new_frontier_mines > remaining_mines {
+        if new_frontier_mines > ctx.remaining_mines {
             continue;
         }
 
@@ -880,14 +880,11 @@ fn backtrack(
         if is_locally_valid(region, assignment, index) {
             backtrack(
                 region,
+                ctx,
                 assignment,
                 index + 1,
-                remaining_mines,
                 new_frontier_mines,
                 valid_configs,
-                start_time,
-                timeout,
-                iteration_count,
             )?;
         }
         // No explicit reset: assignment[index] is overwritten on the next
