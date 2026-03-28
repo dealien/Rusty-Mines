@@ -1,5 +1,3 @@
-use rand::Rng;
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum CellState {
     Hidden,
@@ -76,31 +74,38 @@ impl Board {
         }
     }
 
-    // Place mines randomly, ensuring the first clicked cell and its surroundings are safe
+    // Place mines efficiently, ensuring the first clicked cell and its surroundings are safe.
+    // This avoids the Coupon Collector's Problem at high mine densities by picking from available cells.
     fn place_mines_after_first_click(&mut self, first_x: usize, first_y: usize) {
         let mut rng = rand::thread_rng();
-        let mut mines_placed = 0;
 
         // Make sure we do not place more mines than available cells minus the protected 3x3 area
         let protected_cells = 9.min(self.width * self.height);
         let max_mines = (self.width * self.height).saturating_sub(protected_cells);
         let actual_mines = self.num_mines.min(max_mines);
 
-        while mines_placed < actual_mines {
-            let x = rng.gen_range(0..self.width);
-            let y = rng.gen_range(0..self.height);
-
-            // Ensure first click and its surroundings are not mines
-            if (x as isize - first_x as isize).abs() <= 1
-                && (y as isize - first_y as isize).abs() <= 1
-            {
-                continue;
+        if actual_mines > 0 {
+            // Collect all valid indices that can be mined
+            let mut available_indices =
+                Vec::with_capacity(self.width * self.height - protected_cells);
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    // Ensure first click and its surroundings are not mines
+                    if (x as isize - first_x as isize).abs() <= 1
+                        && (y as isize - first_y as isize).abs() <= 1
+                    {
+                        continue;
+                    }
+                    available_indices.push(self.index(x, y));
+                }
             }
 
-            let idx = self.index(x, y);
-            if !self.cells[idx].is_mine {
-                self.cells[idx].is_mine = true;
-                mines_placed += 1;
+            // Sample indices uniformly
+            let selected =
+                rand::seq::index::sample(&mut rng, available_indices.len(), actual_mines);
+            for idx in selected.into_iter() {
+                let board_idx = available_indices[idx];
+                self.cells[board_idx].is_mine = true;
             }
         }
 
@@ -220,7 +225,11 @@ impl Board {
     }
 
     fn check_win(&mut self) {
-        if self.unrevealed_safe_cells == 0 {
+        if self
+            .cells
+            .iter()
+            .all(|cell| cell.is_mine || cell.state == CellState::Revealed)
+        {
             self.state = GameState::Won;
         }
     }
@@ -277,5 +286,23 @@ mod tests {
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Flagged);
         board.toggle_flag(1, 1);
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Hidden);
+    }
+
+    #[test]
+    fn test_win_condition() {
+        let mut board = Board::new(2, 2, 1);
+        // Manually set a mine and reveal all other cells
+        board.cells[0].is_mine = true;
+        board.cells[1].is_mine = false;
+        board.cells[2].is_mine = false;
+        board.cells[3].is_mine = false;
+        board.first_click = false; // Bypass first click logic
+        board.calculate_adjacent_mines();
+
+        board.reveal(1, 0); // (1, 0) is index 1
+        board.reveal(0, 1); // (0, 1) is index 2
+        board.reveal(1, 1); // (1, 1) is index 3
+
+        assert_eq!(board.state, GameState::Won);
     }
 }
