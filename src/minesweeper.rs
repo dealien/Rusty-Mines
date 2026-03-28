@@ -218,15 +218,11 @@ impl Board {
     }
 
     fn check_win(&mut self) {
-        let mut won = true;
-        for cell in &self.cells {
-            if !cell.is_mine && cell.state != CellState::Revealed {
-                won = false;
-                break;
-            }
-        }
-
-        if won {
+        if self
+            .cells
+            .iter()
+            .all(|cell| cell.is_mine || cell.state == CellState::Revealed)
+        {
             self.state = GameState::Won;
         }
     }
@@ -283,5 +279,23 @@ mod tests {
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Flagged);
         board.toggle_flag(1, 1);
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Hidden);
+    }
+
+    #[test]
+    fn test_win_condition() {
+        let mut board = Board::new(2, 2, 1);
+        // Manually set a mine and reveal all other cells
+        board.cells[0].is_mine = true;
+        board.cells[1].is_mine = false;
+        board.cells[2].is_mine = false;
+        board.cells[3].is_mine = false;
+        board.first_click = false; // Bypass first click logic
+        board.calculate_adjacent_mines();
+
+        board.reveal(1, 0); // (1, 0) is index 1
+        board.reveal(0, 1); // (0, 1) is index 2
+        board.reveal(1, 1); // (1, 1) is index 3
+
+        assert_eq!(board.state, GameState::Won);
     }
 }
