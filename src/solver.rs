@@ -11,6 +11,13 @@ type Constraint = (usize, usize, usize, HashSet<(usize, usize)>);
 /// exact per-cell mine frequencies without re-enumeration.
 type CspRegionConfig = (Vec<(usize, usize)>, Vec<Vec<u8>>);
 
+/// Internal solver errors for bailing out of complex deductions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SolveError {
+    /// The search space was too deep and hit the time budget.
+    Timeout,
+}
+
 // ---------------------------------------------------------------------------
 // Public API types
 // ---------------------------------------------------------------------------
@@ -117,7 +124,7 @@ impl Solver {
     /// 1. **Standard Deduction** – single-cell flag/reveal from neighbour counts.
     /// 2. **Pattern Matching** – subset / 1-2 constraint propagation.
     /// 3. **Constraint Satisfaction** – backtracking DFS over independent
-    ///    frontier sub-regions (Tank algorithm).
+    ///    frontier sub-regions (Tank algorithm), using a 3-second time budget.
     /// 4. **Probability Guess** – reveal the hidden cell with the lowest
     ///    estimated mine probability.
     ///
@@ -329,8 +336,9 @@ impl Solver {
     /// that Rule 4 can derive exact mine frequencies instead of the heuristic
     /// estimate for frontier cells.
     ///
-    /// Regions with more than 32 frontier cells are skipped gracefully to bound
-    /// worst-case computation.  Rule 4 covers those cells with its heuristic.
+    /// Regions typically contain ≤ 20 cells, but larger ones are supported until
+    /// a 3-second time budget is exhausted, at which point the solver bails out
+    /// and falls through to Rule 4 for those specific cells.
     fn apply_csp_deduction(&mut self, board: &Board) -> Option<SolverAction> {
         self.state.current_rule = "Constraint Satisfaction (CST)".to_string();
 
@@ -341,6 +349,8 @@ impl Solver {
             .filter(|c| c.state == CellState::Flagged)
             .count();
         let remaining_mines = board.num_mines.saturating_sub(flagged_count);
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(3000);
 
         // Build raw frontier constraints and group into independent regions.
         let raw = build_frontier_constraints(board);
@@ -353,22 +363,24 @@ impl Solver {
         let mut all_mines: Vec<(usize, usize)> = Vec::new();
 
         for region in regions {
-            // Hard cap: skip over-large regions; Rule 4 handles them heuristically.
-            if region.cells.len() > 32 {
-                continue;
-            }
-
             let mut assignment = vec![0u8; region.cells.len()];
             let mut valid_configs: Vec<Vec<u8>> = Vec::new();
+            let mut iteration_count = 0usize;
 
-            backtrack(
+            if let Err(SolveError::Timeout) = backtrack(
                 &region,
                 &mut assignment,
                 0,
                 remaining_mines,
                 0,
                 &mut valid_configs,
-            );
+                start_time,
+                timeout,
+                &mut iteration_count,
+            ) {
+                // Time budget exhausted for this region; Rule 4 heuristic will take over.
+                continue;
+            }
 
             if valid_configs.is_empty() {
                 continue;
@@ -833,11 +845,20 @@ fn backtrack(
     remaining_mines: usize,
     frontier_mines: usize,
     valid_configs: &mut Vec<Vec<u8>>,
-) {
+    start_time: std::time::Instant,
+    timeout: std::time::Duration,
+    iteration_count: &mut usize,
+) -> Result<(), SolveError> {
+    *iteration_count += 1;
+    // Periodically check elapsed time to avoid overhead on every single call.
+    if *iteration_count % 1000 == 0 && start_time.elapsed() > timeout {
+        return Err(SolveError::Timeout);
+    }
+
     if index == region.cells.len() {
         // All cells assigned without contradiction → record this valid config.
         valid_configs.push(assignment.clone());
-        return;
+        return Ok(());
     }
 
     for &value in &[0u8, 1u8] {
@@ -859,11 +880,15 @@ fn backtrack(
                 remaining_mines,
                 new_frontier_mines,
                 valid_configs,
-            );
+                start_time,
+                timeout,
+                iteration_count,
+            )?;
         }
         // No explicit reset: assignment[index] is overwritten on the next
         // iteration, and is_locally_valid only inspects indices ≤ `index`.
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,8 +1091,8 @@ mod tests {
     }
 
     #[test]
-    fn test_csp_region_too_large_does_not_panic() {
-        // Large board: frontier might exceed the 32-cell cap; must not hang or panic.
+    fn test_csp_large_region_handles_gracefully() {
+        // Large board: frontier may exceed the search budget; must not hang or panic.
         let board = Board::new(9, 9, 10);
         let mut solver = Solver::new();
         // Empty board → no frontier → falls through to Rule 4 probability guess.
@@ -1163,7 +1188,18 @@ mod tests {
         };
         let mut assignment = vec![0u8; 2];
         let mut valid_configs: Vec<Vec<u8>> = Vec::new();
-        backtrack(&region, &mut assignment, 0, 10, 0, &mut valid_configs);
+        let mut iteration_count = 0usize;
+        let _ = backtrack(
+            &region,
+            &mut assignment,
+            0,
+            10,
+            0,
+            &mut valid_configs,
+            std::time::Instant::now(),
+            std::time::Duration::from_millis(3000),
+            &mut iteration_count,
+        );
 
         // Exactly 2 valid configs: [1,0] and [0,1].
         assert_eq!(valid_configs.len(), 2, "Expected exactly 2 valid configs");
@@ -1193,11 +1229,52 @@ mod tests {
         };
         let mut assignment = vec![0u8; 2];
         let mut valid_configs: Vec<Vec<u8>> = Vec::new();
-        backtrack(&region, &mut assignment, 0, 1, 0, &mut valid_configs);
+        let mut iteration_count = 0usize;
+        let _ = backtrack(
+            &region,
+            &mut assignment,
+            0,
+            1,
+            0,
+            &mut valid_configs,
+            std::time::Instant::now(),
+            std::time::Duration::from_millis(3000),
+            &mut iteration_count,
+        );
 
         assert!(
             valid_configs.is_empty(),
             "Global mine cap should have pruned all configs, got: {valid_configs:?}"
         );
+    }
+
+    #[test]
+    fn test_backtrack_timeout_prunes() {
+        // Create a basic region but set iteration count to 1000 and time to "now"
+        // but set timeout to 0ms to force an immediate timeout.
+        let region = Region {
+            cells: vec![(0, 0), (1, 0)],
+            constraints: vec![CspConstraint {
+                cell_indices: vec![0, 1],
+                mines_needed: 1,
+            }],
+        };
+        let mut assignment = vec![0u8; 2];
+        let mut valid_configs: Vec<Vec<u8>> = Vec::new();
+        let mut iteration_count = 999usize; // check triggers on multiples of 1000
+
+        let result = backtrack(
+            &region,
+            &mut assignment,
+            0,
+            10,
+            0,
+            &mut valid_configs,
+            std::time::Instant::now(),
+            std::time::Duration::from_millis(0), // 0ms timeout
+            &mut iteration_count,
+        );
+
+        assert!(matches!(result, Err(SolveError::Timeout)));
     }
 }
