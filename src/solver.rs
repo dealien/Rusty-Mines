@@ -672,6 +672,14 @@ struct Region {
     constraints: Vec<CspConstraint>,
 }
 
+/// Parameters for the recursive backtracking search to avoid argument bloat.
+struct SearchContext {
+    start_time: std::time::Instant,
+    timeout: std::time::Duration,
+    iteration_count: usize,
+    remaining_mines: usize,
+}
+
 /// Scan the board and produce one raw constraint per active numbered cell.
 ///
 /// Returns `(hidden_neighbours, effective_mine_count)` pairs — one per cell
