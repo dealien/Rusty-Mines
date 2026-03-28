@@ -1,5 +1,3 @@
-use rand::Rng;
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum CellState {
     Hidden,
@@ -74,31 +72,38 @@ impl Board {
         }
     }
 
-    // Place mines randomly, ensuring the first clicked cell and its surroundings are safe
+    // Place mines efficiently, ensuring the first clicked cell and its surroundings are safe.
+    // This avoids the Coupon Collector's Problem at high mine densities by picking from available cells.
     fn place_mines_after_first_click(&mut self, first_x: usize, first_y: usize) {
         let mut rng = rand::thread_rng();
-        let mut mines_placed = 0;
 
         // Make sure we do not place more mines than available cells minus the protected 3x3 area
         let protected_cells = 9.min(self.width * self.height);
         let max_mines = (self.width * self.height).saturating_sub(protected_cells);
         let actual_mines = self.num_mines.min(max_mines);
 
-        while mines_placed < actual_mines {
-            let x = rng.gen_range(0..self.width);
-            let y = rng.gen_range(0..self.height);
-
-            // Ensure first click and its surroundings are not mines
-            if (x as isize - first_x as isize).abs() <= 1
-                && (y as isize - first_y as isize).abs() <= 1
-            {
-                continue;
+        if actual_mines > 0 {
+            // Collect all valid indices that can be mined
+            let mut available_indices =
+                Vec::with_capacity(self.width * self.height - protected_cells);
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    // Ensure first click and its surroundings are not mines
+                    if (x as isize - first_x as isize).abs() <= 1
+                        && (y as isize - first_y as isize).abs() <= 1
+                    {
+                        continue;
+                    }
+                    available_indices.push(self.index(x, y));
+                }
             }
 
-            let idx = self.index(x, y);
-            if !self.cells[idx].is_mine {
-                self.cells[idx].is_mine = true;
-                mines_placed += 1;
+            // Sample indices uniformly
+            let selected =
+                rand::seq::index::sample(&mut rng, available_indices.len(), actual_mines);
+            for idx in selected.into_iter() {
+                let board_idx = available_indices[idx];
+                self.cells[board_idx].is_mine = true;
             }
         }
 
