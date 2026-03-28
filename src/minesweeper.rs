@@ -29,6 +29,7 @@ pub struct Board {
     pub height: usize,
     pub cells: Vec<Cell>,
     pub num_mines: usize,
+    pub unrevealed_safe_cells: usize,
     pub state: GameState,
     pub first_click: bool,
 }
@@ -63,11 +64,14 @@ impl Board {
             size
         ];
 
+        let unrevealed_safe_cells = size.saturating_sub(num_mines);
+
         Some(Self {
             width,
             height,
             cells,
             num_mines,
+            unrevealed_safe_cells,
             state: GameState::Playing,
             first_click: true,
         })
@@ -113,6 +117,10 @@ impl Board {
                 mines_placed += 1;
             }
         }
+
+        // Update the actual number of mines in case we had to clamp them
+        self.num_mines = actual_mines;
+        self.unrevealed_safe_cells = (self.width * self.height) - self.num_mines;
 
         self.calculate_adjacent_mines();
         self.first_click = false;
@@ -179,6 +187,8 @@ impl Board {
             self.state = GameState::Lost;
             self.reveal_all_mines();
             return;
+        } else {
+            self.unrevealed_safe_cells -= 1;
         }
 
         if self.cells[idx].adjacent_mines == 0 {
@@ -225,15 +235,7 @@ impl Board {
     }
 
     fn check_win(&mut self) {
-        let mut won = true;
-        for cell in &self.cells {
-            if !cell.is_mine && cell.state != CellState::Revealed {
-                won = false;
-                break;
-            }
-        }
-
-        if won {
+        if self.unrevealed_safe_cells == 0 {
             self.state = GameState::Won;
         }
     }
