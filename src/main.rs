@@ -685,3 +685,27 @@ fn main() -> eframe::Result<()> {
         Box::new(|_cc| Ok(Box::new(MinesweeperApp::default()))),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::Color32;
+
+    #[test]
+    fn test_get_color() {
+        assert_eq!(get_color(1), Color32::LIGHT_BLUE);
+        assert_eq!(get_color(2), Color32::LIGHT_GREEN);
+        assert_eq!(get_color(3), Color32::LIGHT_RED);
+        assert_eq!(get_color(4), Color32::from_rgb(0, 0, 139));
+        assert_eq!(get_color(5), Color32::from_rgb(139, 0, 0));
+        assert_eq!(get_color(6), Color32::from_rgb(0, 139, 139));
+        assert_eq!(get_color(7), Color32::BLACK);
+        assert_eq!(get_color(8), Color32::GRAY);
+
+        // Edge cases and fallbacks
+        assert_eq!(get_color(0), Color32::WHITE);
+        assert_eq!(get_color(9), Color32::WHITE);
+        assert_eq!(get_color(100), Color32::WHITE);
+        assert_eq!(get_color(255), Color32::WHITE);
+    }
+}
