@@ -844,22 +844,19 @@ fn is_locally_valid(region: &Region, assignment: &[u8], index: usize) -> bool {
 /// valid configuration is found (one allocation per leaf, none on the hot path).
 ///
 /// `frontier_mines` tracks cumulative mines in the current branch so that the
-/// **global** mine budget (`remaining_mines`) can be enforced as an additional
+/// **global** mine budget (`ctx.remaining_mines`) can be enforced as an additional
 /// pruning constraint.
 fn backtrack(
     region: &Region,
+    ctx: &mut SearchContext,
     assignment: &mut Vec<u8>,
     index: usize,
-    remaining_mines: usize,
     frontier_mines: usize,
     valid_configs: &mut Vec<Vec<u8>>,
-    start_time: std::time::Instant,
-    timeout: std::time::Duration,
-    iteration_count: &mut usize,
 ) -> Result<(), SolveError> {
-    *iteration_count += 1;
+    ctx.iteration_count += 1;
     // Periodically check elapsed time to avoid overhead on every single call.
-    if *iteration_count % 1000 == 0 && start_time.elapsed() > timeout {
+    if ctx.iteration_count.is_multiple_of(1000) && ctx.start_time.elapsed() > ctx.timeout {
         return Err(SolveError::Timeout);
     }
 
