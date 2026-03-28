@@ -46,7 +46,8 @@ impl Default for MinesweeperApp {
         let height = 25;
         let mines = 100;
         Self {
-            board: Board::new(width, height, mines),
+            board: Board::new(width, height, mines)
+                .unwrap_or_else(|| Board::new(10, 10, 10).unwrap()),
             cfg_width: width,
             cfg_height: height,
             cfg_mines: mines,
@@ -495,11 +496,13 @@ impl eframe::App for MinesweeperApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Restart").clicked() {
-                            self.board = Board::new(
+                            if let Some(new_board) = Board::new(
                                 self.board.width,
                                 self.board.height,
                                 self.board.num_mines,
-                            );
+                            ) {
+                                self.board = new_board;
+                            }
                             self.solver.state.clear();
                             self.solver_auto_play = false;
                             self.action_history.clear();
@@ -516,13 +519,13 @@ impl eframe::App for MinesweeperApp {
                     ui.label("Size:");
                     ui.add(
                         egui::DragValue::new(&mut self.cfg_width)
-                            .range(5..=30)
+                            .range(5..=50)
                             .speed(0.1),
                     );
                     ui.label("x");
                     ui.add(
                         egui::DragValue::new(&mut self.cfg_height)
-                            .range(5..=30)
+                            .range(5..=50)
                             .speed(0.1),
                     );
                     ui.separator();
@@ -533,15 +536,21 @@ impl eframe::App for MinesweeperApp {
                             .speed(0.1),
                     );
 
-                    if ui.button("New Game").clicked() {
-                        self.board = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines);
+                    if ui.button("New Game").clicked()
+                        && let Some(new_board) =
+                            Board::new(self.cfg_width, self.cfg_height, self.cfg_mines)
+                    {
+                        self.board = new_board;
                         self.solver.state.clear();
                         self.solver_auto_play = false;
                         self.action_history.clear();
                     }
 
-                    if ui.button("Solve New Game").clicked() {
-                        self.board = Board::new(self.cfg_width, self.cfg_height, self.cfg_mines);
+                    if ui.button("Solve New Game").clicked()
+                        && let Some(new_board) =
+                            Board::new(self.cfg_width, self.cfg_height, self.cfg_mines)
+                    {
+                        self.board = new_board;
                         self.solver.state.clear();
                         self.solver_auto_play = true;
                         self.last_solver_step = Instant::now();

@@ -134,7 +134,7 @@ impl Solver {
     /// use rusty_mines::minesweeper::Board;
     /// use rusty_mines::solver::Solver;
     ///
-    /// let board = Board::new(9, 9, 10);
+    /// let board = Board::new(9, 9, 10).unwrap();
     /// let mut solver = Solver::new();
     /// let action = solver.get_next_move(&board);
     /// ```
@@ -925,7 +925,7 @@ mod tests {
 
     /// Build a deterministic 3×3 board with one mine at (0,0).
     fn make_test_board() -> Board {
-        let mut board = Board::new(3, 3, 1);
+        let mut board = Board::new(3, 3, 1).unwrap();
         let mine_idx = board.index(0, 0);
         board.cells[mine_idx].is_mine = true;
         board.first_click = false;
@@ -984,7 +984,7 @@ mod tests {
     #[test]
     fn test_probability_guess_returns_reveal() {
         // Fresh board: no revealed cells → solver must guess.
-        let board = Board::new(5, 5, 5);
+        let board = Board::new(5, 5, 5).unwrap();
         let mut solver = Solver::new();
         let action = solver.get_next_move(&board);
         assert!(
@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn test_solver_state_cleared_between_steps() {
-        let board = Board::new(5, 5, 5);
+        let board = Board::new(5, 5, 5).unwrap();
         let mut solver = Solver::new();
         let _ = solver.get_next_move(&board);
         let first_rule = solver.state.current_rule.clone();
@@ -1009,7 +1009,7 @@ mod tests {
         // 5×5 board with no mines: every cell has 0% probability.
         // Corner (0,0) has 3 total neighbours; interior (2,2) has 8.
         // The solver should pick an interior cell (highest hidden-neighbour count).
-        let board = Board::new(5, 5, 0);
+        let board = Board::new(5, 5, 0).unwrap();
         let mut solver = Solver::new();
         let action = solver.get_next_move(&board);
 
@@ -1027,8 +1027,8 @@ mod tests {
     #[test]
     fn test_tie_break_determinism() {
         // Same board layout must always produce the same first move.
-        let board1 = Board::new(10, 10, 10);
-        let board2 = Board::new(10, 10, 10);
+        let board1 = Board::new(10, 10, 10).unwrap();
+        let board2 = Board::new(10, 10, 10).unwrap();
         let mut solver = Solver::new();
 
         let move1 = solver.get_next_move(&board1);
@@ -1092,7 +1092,7 @@ mod tests {
     #[test]
     fn test_csp_large_region_handles_gracefully() {
         // Large board: frontier may exceed the search budget; must not hang or panic.
-        let board = Board::new(9, 9, 10);
+        let board = Board::new(9, 9, 10).unwrap();
         let mut solver = Solver::new();
         // Empty board → no frontier → falls through to Rule 4 probability guess.
         let action = solver.get_next_move(&board);
@@ -1156,7 +1156,7 @@ mod tests {
         //
         // Strategy: use a fresh board with no revealed cells so neither
         // Rule 1/2/3 finds a certainty, and Rule 4 definitely runs.
-        let board = Board::new(9, 9, 10);
+        let board = Board::new(9, 9, 10).unwrap();
         let mut solver = Solver::new();
         // Fresh board: no frontier → CSP has nothing to enumerate, falls to Rule 4.
         let action = solver.get_next_move(&board);
