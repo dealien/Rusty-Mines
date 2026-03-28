@@ -1187,18 +1187,14 @@ mod tests {
         };
         let mut assignment = vec![0u8; 2];
         let mut valid_configs: Vec<Vec<u8>> = Vec::new();
-        let mut iteration_count = 0usize;
-        let _ = backtrack(
-            &region,
-            &mut assignment,
-            0,
-            10,
-            0,
-            &mut valid_configs,
-            std::time::Instant::now(),
-            std::time::Duration::from_millis(3000),
-            &mut iteration_count,
-        );
+        let mut ctx = SearchContext {
+            start_time: std::time::Instant::now(),
+            timeout: std::time::Duration::from_millis(3000),
+            iteration_count: 0,
+            remaining_mines: 10,
+        };
+
+        let _ = backtrack(&region, &mut ctx, &mut assignment, 0, 0, &mut valid_configs);
 
         // Exactly 2 valid configs: [1,0] and [0,1].
         assert_eq!(valid_configs.len(), 2, "Expected exactly 2 valid configs");
@@ -1228,18 +1224,14 @@ mod tests {
         };
         let mut assignment = vec![0u8; 2];
         let mut valid_configs: Vec<Vec<u8>> = Vec::new();
-        let mut iteration_count = 0usize;
-        let _ = backtrack(
-            &region,
-            &mut assignment,
-            0,
-            1,
-            0,
-            &mut valid_configs,
-            std::time::Instant::now(),
-            std::time::Duration::from_millis(3000),
-            &mut iteration_count,
-        );
+        let mut ctx = SearchContext {
+            start_time: std::time::Instant::now(),
+            timeout: std::time::Duration::from_millis(3000),
+            iteration_count: 0,
+            remaining_mines: 1,
+        };
+
+        let _ = backtrack(&region, &mut ctx, &mut assignment, 0, 0, &mut valid_configs);
 
         assert!(
             valid_configs.is_empty(),
@@ -1260,19 +1252,14 @@ mod tests {
         };
         let mut assignment = vec![0u8; 2];
         let mut valid_configs: Vec<Vec<u8>> = Vec::new();
-        let mut iteration_count = 999usize; // check triggers on multiples of 1000
+        let mut ctx = SearchContext {
+            start_time: std::time::Instant::now(),
+            timeout: std::time::Duration::from_millis(0),
+            iteration_count: 999, // check triggers on multiples of 1000
+            remaining_mines: 10,
+        };
 
-        let result = backtrack(
-            &region,
-            &mut assignment,
-            0,
-            10,
-            0,
-            &mut valid_configs,
-            std::time::Instant::now(),
-            std::time::Duration::from_millis(0), // 0ms timeout
-            &mut iteration_count,
-        );
+        let result = backtrack(&region, &mut ctx, &mut assignment, 0, 0, &mut valid_configs);
 
         assert!(matches!(result, Err(SolveError::Timeout)));
     }
