@@ -279,4 +279,20 @@ mod tests {
         board.toggle_flag(1, 1);
         assert_eq!(board.get_cell(1, 1).unwrap().state, CellState::Hidden);
     }
+
+    #[test]
+    fn test_toggle_flag_out_of_bounds() {
+        let mut board = Board::new(5, 5, 0);
+        // Test x out of bounds
+        board.toggle_flag(5, 0);
+        // Test y out of bounds
+        board.toggle_flag(0, 5);
+        // Test both out of bounds
+        board.toggle_flag(5, 5);
+
+        // Ensure no cell state changed (all should be Hidden)
+        for cell in &board.cells {
+            assert_eq!(cell.state, CellState::Hidden);
+        }
+    }
 }
