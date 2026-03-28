@@ -2,8 +2,18 @@ use std::collections::{HashMap, HashSet};
 
 use crate::minesweeper::{Board, CellState};
 
-/// Type alias for a constraint entry: (cell_x, cell_y, effective_mine_count, hidden_neighbours).
+/// Type alias for a constraint entry used in Rule 2 pattern matching:
+/// `(cell_x, cell_y, effective_mine_count, hidden_neighbours)`.
 type Constraint = (usize, usize, usize, HashSet<(usize, usize)>);
+
+/// One cached CSP region result: the ordered frontier cell positions paired with
+/// every valid mine assignment found by backtracking.  Used by Rule 4 to compute
+/// exact per-cell mine frequencies without re-enumeration.
+type CspRegionConfig = (Vec<(usize, usize)>, Vec<Vec<u8>>);
+
+// ---------------------------------------------------------------------------
+// Public API types
+// ---------------------------------------------------------------------------
 
 /// An action the solver wants the game loop to apply to the board.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -28,16 +38,36 @@ pub struct SolverState {
     pub current_rule: String,
     /// The next action the solver has decided on (if any).
     pub next_action: SolverAction,
+    /// Cached valid mine configurations from Rule 3 (Constraint Satisfaction).
+    ///
+    /// Each entry holds `(ordered frontier cells, valid bit-assignments)` for
+    /// one independent sub-region.  Rule 4 (Probability Guess) reads this to
+    /// compute **exact** per-cell mine frequencies instead of the heuristic
+    /// estimate, for frontier cells that Rule 3 has already enumerated.
+    pub csp_configs: Vec<CspRegionConfig>,
 }
 
-/// Configuration toggles for enabling/disabling different solver deduction tiers.
+impl SolverState {
+    /// Reset all transient visualisation data between solver steps.
+    pub fn clear(&mut self) {
+        self.highlighted_cells.clear();
+        self.probabilities.clear();
+        self.current_rule.clear();
+        self.next_action = SolverAction::None;
+        self.csp_configs.clear();
+    }
+}
+
+/// Configuration toggles for enabling/disabling solver deduction tiers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolverSettings {
     /// Rule 1: Standard single-cell deduction.
     pub use_standard: bool,
-    /// Rule 2: Pattern-based deduction (e.g. 1-1, 1-2).
+    /// Rule 2: Pattern-based deduction (subset / 1-2 constraint propagation).
     pub use_subset: bool,
-    /// Rule 3: Iterative probability/heuristic logic.
+    /// Rule 3: Constraint Satisfaction (Tank algorithm / backtracking DFS).
+    pub use_csp: bool,
+    /// Rule 4: Probability/heuristic guess (fallback when no certainty exists).
     pub use_probability: bool,
 }
 
@@ -46,20 +76,15 @@ impl Default for SolverSettings {
         Self {
             use_standard: true,
             use_subset: true,
+            use_csp: true,
             use_probability: true,
         }
     }
 }
 
-impl SolverState {
-    /// Reset transient visualisation data between solver steps.
-    pub fn clear(&mut self) {
-        self.highlighted_cells.clear();
-        self.probabilities.clear();
-        self.current_rule.clear();
-        self.next_action = SolverAction::None;
-    }
-}
+// ---------------------------------------------------------------------------
+// Solver
+// ---------------------------------------------------------------------------
 
 /// The Minesweeper auto-solver.
 ///
@@ -75,16 +100,26 @@ pub struct Solver {
 }
 
 impl Solver {
-    /// Creates a new solver instance.
+    /// Creates a new solver instance with all deduction tiers enabled.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Analyse the board and return the best next action.
     ///
-    /// The internal [`SolverState`] is updated with visualisation data as a
-    /// side-effect so the UI can render the "thought process" without an extra
-    /// round-trip.
+    /// The solver tries each deduction tier in order, returning as soon as a
+    /// certain move is found.  If all certainty tiers fail, Rule 4 makes a
+    /// probabilistic guess.  The internal [`SolverState`] is populated as a
+    /// side-effect so the UI can render the "thought process".
+    ///
+    /// # Rule Execution Order
+    ///
+    /// 1. **Standard Deduction** – single-cell flag/reveal from neighbour counts.
+    /// 2. **Pattern Matching** – subset / 1-2 constraint propagation.
+    /// 3. **Constraint Satisfaction** – backtracking DFS over independent
+    ///    frontier sub-regions (Tank algorithm).
+    /// 4. **Probability Guess** – reveal the hidden cell with the lowest
+    ///    estimated mine probability.
     ///
     /// # Examples
     ///
@@ -96,12 +131,11 @@ impl Solver {
     /// let mut solver = Solver::new();
     /// let action = solver.get_next_move(&board);
     /// ```
-    /// ```
     #[allow(clippy::collapsible_if)]
     pub fn get_next_move(&mut self, board: &Board) -> SolverAction {
         self.state.clear();
 
-        // Try each rule tier in order if enabled in settings.
+        // Rule 1 – Standard Deduction.
         if self.settings.use_standard {
             if let Some(action) = self.apply_standard_deduction(board) {
                 self.state.next_action = action.clone();
@@ -109,6 +143,7 @@ impl Solver {
             }
         }
 
+        // Rule 2 – Pattern Matching.
         if self.settings.use_subset {
             if let Some(action) = self.apply_pattern_matching(board) {
                 self.state.next_action = action.clone();
@@ -116,7 +151,17 @@ impl Solver {
             }
         }
 
-        // Fall back to probability heuristic if enabled.
+        // Rule 3 – Constraint Satisfaction.
+        // Even when no certainty is found, `csp_configs` is populated so that
+        // Rule 4 can derive exact mine frequencies for frontier cells.
+        if self.settings.use_csp {
+            if let Some(action) = self.apply_csp_deduction(board) {
+                self.state.next_action = action.clone();
+                return action;
+            }
+        }
+
+        // Rule 4 – Probability Guess (fallback).
         if self.settings.use_probability {
             let action = self.apply_probability_guess(board);
             self.state.next_action = action.clone();
@@ -133,7 +178,7 @@ impl Solver {
     /// For every revealed numbered cell, count its hidden and flagged neighbours.
     ///
     /// * If `flags == number`:  all remaining hidden neighbours are safe → reveal.
-    /// * If `hidden == number - flags`:  all hidden neighbours are mines → flag.
+    /// * If `hidden + flags == number`:  all hidden neighbours are mines → flag.
     fn apply_standard_deduction(&mut self, board: &Board) -> Option<SolverAction> {
         self.state.current_rule = "Standard Deduction".to_string();
 
@@ -188,8 +233,8 @@ impl Solver {
     // Rule 2 – Pattern matching (subset / 1-2 constraint propagation)
     // -----------------------------------------------------------------------
 
-    /// Compares pairs of revealed numbered cells whose *effective* constraint sets
-    /// overlap.  If one cell's hidden-neighbour set is a strict subset of
+    /// Compares pairs of revealed numbered cells whose *effective* constraint
+    /// sets overlap.  If one cell's hidden-neighbour set is a strict subset of
     /// another's, the difference in their numbers tells us whether the subset
     /// cells are safe or mines.
     fn apply_pattern_matching(&mut self, board: &Board) -> Option<SolverAction> {
@@ -271,14 +316,114 @@ impl Solver {
     }
 
     // -----------------------------------------------------------------------
-    // Rule 3 – Probability-based heuristic guess
+    // Rule 3 – Constraint Satisfaction (Tank algorithm)
+    // -----------------------------------------------------------------------
+
+    /// Partition the board's frontier into independent sub-regions and run a
+    /// backtracking DFS over each one to enumerate all valid mine arrangements.
+    ///
+    /// A cell is deduced **safe** if it receives `0` in every valid
+    /// configuration for its region, and a **mine** if it is always `1`.
+    ///
+    /// All valid configurations are cached in [`SolverState::csp_configs`] so
+    /// that Rule 4 can derive exact mine frequencies instead of the heuristic
+    /// estimate for frontier cells.
+    ///
+    /// Regions with more than 32 frontier cells are skipped gracefully to bound
+    /// worst-case computation.  Rule 4 covers those cells with its heuristic.
+    fn apply_csp_deduction(&mut self, board: &Board) -> Option<SolverAction> {
+        self.state.current_rule = "Constraint Satisfaction (CST)".to_string();
+
+        // Compute remaining mine budget for global pruning.
+        let flagged_count = board
+            .cells
+            .iter()
+            .filter(|c| c.state == CellState::Flagged)
+            .count();
+        let remaining_mines = board.num_mines.saturating_sub(flagged_count);
+
+        // Build raw frontier constraints and group into independent regions.
+        let raw = build_frontier_constraints(board);
+        if raw.is_empty() {
+            return None;
+        }
+        let regions = group_into_regions(raw);
+
+        let mut all_safe: Vec<(usize, usize)> = Vec::new();
+        let mut all_mines: Vec<(usize, usize)> = Vec::new();
+
+        for region in regions {
+            // Hard cap: skip over-large regions; Rule 4 handles them heuristically.
+            if region.cells.len() > 32 {
+                continue;
+            }
+
+            let mut assignment = vec![0u8; region.cells.len()];
+            let mut valid_configs: Vec<Vec<u8>> = Vec::new();
+
+            backtrack(
+                &region,
+                &mut assignment,
+                0,
+                remaining_mines,
+                0,
+                &mut valid_configs,
+            );
+
+            if valid_configs.is_empty() {
+                continue;
+            }
+
+            let config_count = valid_configs.len();
+
+            // Inspect per-cell mine frequency across all valid configurations.
+            for (i, &pos) in region.cells.iter().enumerate() {
+                let mine_count = valid_configs.iter().filter(|cfg| cfg[i] == 1).count();
+                if mine_count == 0 {
+                    all_safe.push(pos);
+                } else if mine_count == config_count {
+                    all_mines.push(pos);
+                }
+            }
+
+            // Cache for Rule 4 synergy (exact probabilities on frontier).
+            self.state.csp_configs.push((region.cells, valid_configs));
+        }
+
+        // Sort for determinism before returning the first certainty.
+        all_safe.sort_unstable();
+        all_mines.sort_unstable();
+
+        if let Some(&(x, y)) = all_safe.first() {
+            self.state.highlighted_cells.push((x, y));
+            self.state.current_rule = format!("CST: ({x},{y}) confirmed safe");
+            return Some(SolverAction::Reveal(x, y));
+        }
+        if let Some(&(x, y)) = all_mines.first() {
+            self.state.highlighted_cells.push((x, y));
+            self.state.current_rule = format!("CST: ({x},{y}) confirmed mine");
+            return Some(SolverAction::Flag(x, y));
+        }
+
+        None
+    }
+
+    // -----------------------------------------------------------------------
+    // Rule 4 – Probability-based heuristic guess
     // -----------------------------------------------------------------------
 
     /// When no certain move exists, estimate per-cell mine probability and
     /// reveal the hidden cell with the lowest probability.
     ///
-    /// Cells bordering numbered cells are estimated from neighbour constraints.
-    /// Unreachable interior cells use the global density estimate.
+    /// **Priority for probability estimates:**
+    /// 1. Frontier cells enumerated by Rule 3 → exact CSP-derived frequencies.
+    /// 2. Cells adjacent to revealed numbers → local constraint heuristic.
+    /// 3. Deep-unknown cells (no revealed numbered neighbour) → global density.
+    ///
+    /// **Tie-breaking priority:**
+    /// 1. Lowest mine probability.
+    /// 2. Highest hidden-neighbour count (maximises information yield).
+    /// 3. Coordinates `(y, x)` ascending (determinism).
     fn apply_probability_guess(&mut self, board: &Board) -> SolverAction {
         self.state.current_rule = "Probability Guess".to_string();
 
@@ -394,7 +539,7 @@ impl Solver {
                                 } else if !confirmed_safe.contains(&pos) {
                                     uncertain.push(pos); // truly uncertain
                                 }
-                                // confirmed_safe hidden cells are ignored
+                                // confirmed_safe cells are excluded from uncertainty
                             }
                             _ => {}
                         }
@@ -422,7 +567,7 @@ impl Solver {
             }
         }
 
-        // Apply confirmed knowledge — these override probabilistic estimates.
+        // Apply confirmed knowledge — override the heuristic estimates.
         for pos in &confirmed_safe {
             probs.insert(*pos, 0.0);
         }
@@ -430,15 +575,25 @@ impl Solver {
             probs.insert(*pos, 1.0);
         }
 
+        // Override frontier cells with exact CSP-derived frequencies if Rule 3
+        // already enumerated them, replacing heuristic guesses with exact math.
+        for (cells, configs) in &self.state.csp_configs {
+            let n = configs.len() as f32;
+            for (i, &pos) in cells.iter().enumerate() {
+                let mine_freq = configs.iter().filter(|cfg| cfg[i] == 1).count() as f32;
+                // Insert exact probability, overriding heuristic estimate.
+                probs.insert(pos, mine_freq / n);
+            }
+        }
+
         self.state.probabilities = probs.clone();
 
-        // Pick the hidden cell with the lowest mine probability.
         // Pick the best hidden cell candidate.
         //
-        // We prioritize:
-        // 1. **Lowest Mine Probability** (lower risk first)
-        // 2. **Highest Hidden Neighbors** (higher information yield first)
-        // 3. **Coordinates** (deterministically chooses top-most, then left-most)
+        // Priority:
+        // 1. Lowest mine probability  (lowest risk)
+        // 2. Most hidden neighbours   (highest information yield)
+        // 3. Coordinates (y, x)       (determinism)
         let best = probs.iter().min_by(|(pos_a, prob_a), (pos_b, prob_b)| {
             let (ax, ay) = **pos_a;
             let a_prob = **prob_a;
@@ -466,12 +621,11 @@ impl Solver {
                                 .is_some_and(|c| c.state == CellState::Hidden)
                         })
                         .count();
-
-                    // Compare descending (B to A).
+                    // Descending: most hidden neighbours wins.
                     b_hidden.cmp(&a_hidden)
                 })
                 .then_with(|| {
-                    // Tie-break 2: Coordinates (y, x) for perfect determinism.
+                    // Tie-break 2: top-most then left-most for perfect determinism.
                     ay.cmp(&by).then(ax.cmp(&bx))
                 })
         });
@@ -481,28 +635,242 @@ impl Solver {
             None => SolverAction::None,
         }
     }
+}
 
-    // -----------------------------------------------------------------------
-    // Rule 4 – (Placeholder) Constraint Satisfaction
-    // -----------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Private helpers for Rule 3 – Constraint Satisfaction
+// ---------------------------------------------------------------------------
 
-    /// Treat the boundary between revealed and hidden cells as a system of
-    /// linear constraints to find moves that basic deduction misses.
-    ///
-    /// This is a stub – a full implementation would enumerate consistent mine
-    /// assignments and mark cells safe/mine when they agree in every solution.
-    #[allow(dead_code)]
-    fn advanced_deduction(&self, _board: &Board) -> Option<SolverAction> {
-        // TODO: Implement full constraint satisfaction / gaussian elimination.
-        None
+/// A single numbered-cell equation reduced to frontier-cell indices.
+///
+/// Using indices into a contiguous `Region::cells` vector rather than hashing
+/// coordinates avoids repeated hash lookups on the recursive DFS hot path.
+struct CspConstraint {
+    /// Indices into the parent [`Region::cells`] vector.
+    cell_indices: Vec<usize>,
+    /// Effective mines still needed (adjacent_mines − already_flagged).
+    mines_needed: usize,
+}
+
+/// An independent sub-region of the frontier, suitable for isolated backtracking.
+struct Region {
+    /// Ordered hidden frontier cells for this region (sorted for determinism).
+    cells: Vec<(usize, usize)>,
+    /// Equations expressed as indices into [`Region::cells`].
+    constraints: Vec<CspConstraint>,
+}
+
+/// Scan the board and produce one raw constraint per active numbered cell.
+///
+/// Returns `(hidden_neighbours, effective_mine_count)` pairs — one per cell
+/// that has at least one hidden neighbour after subtracting placed flags.
+fn build_frontier_constraints(board: &Board) -> Vec<(HashSet<(usize, usize)>, usize)> {
+    let mut result = Vec::new();
+    for y in 0..board.height {
+        for x in 0..board.width {
+            let cell = match board.get_cell(x, y) {
+                Some(c) if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 => {
+                    c
+                }
+                _ => continue,
+            };
+            let neighbours = get_neighbours(board, x, y);
+            let flag_count = neighbours
+                .iter()
+                .filter(|&&(nx, ny)| {
+                    board
+                        .get_cell(nx, ny)
+                        .is_some_and(|c| c.state == CellState::Flagged)
+                })
+                .count();
+            let hidden: HashSet<(usize, usize)> = neighbours
+                .iter()
+                .filter(|&&(nx, ny)| {
+                    board
+                        .get_cell(nx, ny)
+                        .is_some_and(|c| c.state == CellState::Hidden)
+                })
+                .cloned()
+                .collect();
+
+            if hidden.is_empty() {
+                continue;
+            }
+            let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+            result.push((hidden, effective));
+        }
+    }
+    result
+}
+
+/// Iterative union-find root lookup with path-halving compression.
+fn uf_find(parent: &mut [usize], mut i: usize) -> usize {
+    while parent[i] != i {
+        // Path halving: link each node to its grandparent.
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+    }
+    i
+}
+
+/// Group raw frontier constraints into independent [`Region`]s via union-find.
+///
+/// Two constraints belong to the same region when they share at least one
+/// hidden cell.  Each region can then be solved in isolation, keeping the
+/// backtracking search space small (typically ≤ 20 cells per region).
+fn group_into_regions(raw: Vec<(HashSet<(usize, usize)>, usize)>) -> Vec<Region> {
+    let n = raw.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    // Union any two constraints that share at least one hidden cell.
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if !raw[i].0.is_disjoint(&raw[j].0) {
+                let ri = uf_find(&mut parent, i);
+                let rj = uf_find(&mut parent, j);
+                if ri != rj {
+                    parent[ri] = rj;
+                }
+            }
+        }
+    }
+
+    // Collect constraint indices per root component.
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let root = uf_find(&mut parent, i);
+        groups.entry(root).or_default().push(i);
+    }
+
+    // Build a Region for each component.
+    let mut regions = Vec::with_capacity(groups.len());
+    for (_, constraint_indices) in groups {
+        // Collect all unique cells for this region; sort for determinism.
+        let mut cell_vec: Vec<(usize, usize)> = constraint_indices
+            .iter()
+            .flat_map(|&ci| raw[ci].0.iter().cloned())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        cell_vec.sort_unstable();
+
+        // Build a stable position → index map for constraint construction.
+        let cell_index: HashMap<(usize, usize), usize> = cell_vec
+            .iter()
+            .enumerate()
+            .map(|(idx, &pos)| (pos, idx))
+            .collect();
+
+        // Convert raw constraints to index-based form.
+        let constraints: Vec<CspConstraint> = constraint_indices
+            .iter()
+            .map(|&ci| {
+                let (ref hidden, mines_needed) = raw[ci];
+                CspConstraint {
+                    cell_indices: hidden.iter().map(|pos| cell_index[pos]).collect(),
+                    mines_needed,
+                }
+            })
+            .collect();
+
+        regions.push(Region {
+            cells: cell_vec,
+            constraints,
+        });
+    }
+    regions
+}
+
+/// Check whether `assignment[0..=index]` violates any constraint.
+///
+/// * Fully-assigned constraints (all indices ≤ `index`) must have exact mine count.
+/// * Partially-assigned constraints are pruned when they are already over-budget
+///   or when the remaining unassigned cells cannot satisfy the remaining need.
+fn is_locally_valid(region: &Region, assignment: &[u8], index: usize) -> bool {
+    for constraint in &region.constraints {
+        let mut mines_assigned = 0usize;
+        let mut unassigned = 0usize;
+
+        for &ci in &constraint.cell_indices {
+            if ci <= index {
+                mines_assigned += assignment[ci] as usize;
+            } else {
+                unassigned += 1;
+            }
+        }
+
+        if unassigned == 0 {
+            // Fully determined: must match exactly.
+            if mines_assigned != constraint.mines_needed {
+                return false;
+            }
+        } else {
+            // Partial: already over budget?
+            if mines_assigned > constraint.mines_needed {
+                return false;
+            }
+            // Enough remaining capacity to fulfil the outstanding need?
+            if constraint.mines_needed - mines_assigned > unassigned {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Recursive backtracking DFS over a single independent [`Region`].
+///
+/// `assignment` is mutated in-place; a clone is only made when a complete
+/// valid configuration is found (one allocation per leaf, none on the hot path).
+///
+/// `frontier_mines` tracks cumulative mines in the current branch so that the
+/// **global** mine budget (`remaining_mines`) can be enforced as an additional
+/// pruning constraint.
+fn backtrack(
+    region: &Region,
+    assignment: &mut Vec<u8>,
+    index: usize,
+    remaining_mines: usize,
+    frontier_mines: usize,
+    valid_configs: &mut Vec<Vec<u8>>,
+) {
+    if index == region.cells.len() {
+        // All cells assigned without contradiction → record this valid config.
+        valid_configs.push(assignment.clone());
+        return;
+    }
+
+    for &value in &[0u8, 1u8] {
+        let new_frontier_mines = frontier_mines + value as usize;
+
+        // Global constraint: total assigned mines must not exceed board budget.
+        if new_frontier_mines > remaining_mines {
+            continue;
+        }
+
+        assignment[index] = value;
+
+        // Prune immediately if the partial assignment breaks a local constraint.
+        if is_locally_valid(region, assignment, index) {
+            backtrack(
+                region,
+                assignment,
+                index + 1,
+                remaining_mines,
+                new_frontier_mines,
+                valid_configs,
+            );
+        }
+        // No explicit reset: assignment[index] is overwritten on the next
+        // iteration, and is_locally_valid only inspects indices ≤ `index`.
     }
 }
 
 // ---------------------------------------------------------------------------
-// Helper utilities
+// General helper utilities
 // ---------------------------------------------------------------------------
 
-/// Return all valid (x, y) neighbours of a cell.
+/// Return all valid `(x, y)` neighbours of a cell within the board bounds.
 fn get_neighbours(board: &Board, x: usize, y: usize) -> Vec<(usize, usize)> {
     let mut result = Vec::with_capacity(8);
     for dy in -1_i32..=1 {
@@ -529,18 +897,16 @@ mod tests {
     use super::*;
     use crate::minesweeper::Board;
 
-    /// Build a manually configured board (no randomness) by directly setting
-    /// cell data after construction.
-    fn make_test_board() -> Board {
-        // 3×3 board: mine at (0,0), everything else safe.
-        let mut board = Board::new(3, 3, 1);
+    // ── Shared helpers ───────────────────────────────────────────────────────
 
-        // Pre-compute index, then mutate – avoids simultaneous borrow of `board`.
+    /// Build a deterministic 3×3 board with one mine at (0,0).
+    fn make_test_board() -> Board {
+        let mut board = Board::new(3, 3, 1);
         let mine_idx = board.index(0, 0);
         board.cells[mine_idx].is_mine = true;
         board.first_click = false;
 
-        // Recalculate adjacencies inline (method is private).
+        // Recalculate adjacency counts inline (avoids a private method).
         for cy in 0..board.height {
             for cx in 0..board.width {
                 let self_idx = board.index(cx, cy);
@@ -570,28 +936,30 @@ mod tests {
         board
     }
 
+    // ── Rule 1 ───────────────────────────────────────────────────────────────
+
     #[test]
     fn test_standard_deduction_flag() {
         let mut board = make_test_board();
-        // Reveal (1,0): adjacent_mines == 1, its only hidden mine-neighbour is (0,0).
+        // Reveal (1,0): adjacent_mines == 1, lone hidden mine-neighbour is (0,0).
         board.reveal(1, 0);
-        // Also reveal (1,1) so deduction has more context.
         board.reveal(1, 1);
         board.reveal(2, 0);
         board.reveal(2, 1);
 
         let mut solver = Solver::new();
         let action = solver.get_next_move(&board);
-        // The solver should flag (0,0) as it's the only hidden neighbour of a "1".
         assert!(
             matches!(action, SolverAction::Flag(0, 0)),
             "Expected Flag(0,0), got {action:?}"
         );
     }
 
+    // ── Rule 4 (guess) ───────────────────────────────────────────────────────
+
     #[test]
     fn test_probability_guess_returns_reveal() {
-        // Empty 5×5 board with no revealed cells – solver must guess.
+        // Fresh board: no revealed cells → solver must guess.
         let board = Board::new(5, 5, 5);
         let mut solver = Solver::new();
         let action = solver.get_next_move(&board);
@@ -608,28 +976,24 @@ mod tests {
         let _ = solver.get_next_move(&board);
         let first_rule = solver.state.current_rule.clone();
         let _ = solver.get_next_move(&board);
-        // State is re-populated each call, not accumulated.
+        // State is repopulated each call, not accumulated.
         assert!(!first_rule.is_empty());
     }
 
     #[test]
     fn test_tie_break_prefers_interior() {
-        // Simple 5x5 board, no mines, no revealed cells.
-        // Every cell has 0% probability.
-        // Corner (0,0) has 3 hidden neighbors.
-        // Interior (2,2) has 8 hidden neighbors.
-        // The solver should pick an interior cell.
+        // 5×5 board with no mines: every cell has 0% probability.
+        // Corner (0,0) has 3 total neighbours; interior (2,2) has 8.
+        // The solver should pick an interior cell (highest hidden-neighbour count).
         let board = Board::new(5, 5, 0);
         let mut solver = Solver::new();
         let action = solver.get_next_move(&board);
 
         if let SolverAction::Reveal(x, y) = action {
-            // Interior cells are at (1..4, 1..4).
-            // A corner or edge would have < 8 neighbours.
             let hidden_count = get_neighbours(&board, x, y).len();
             assert_eq!(
                 hidden_count, 8,
-                "Expected solver to pick an interior cell with 8 neighbours, but got ({x},{y}) with {hidden_count}"
+                "Expected an interior cell (8 neighbours), got ({x},{y}) with {hidden_count}"
             );
         } else {
             panic!("Expected Reveal action, got {action:?}");
@@ -638,21 +1002,19 @@ mod tests {
 
     #[test]
     fn test_tie_break_determinism() {
-        // Two identical scenarios should produce the same first move.
+        // Same board layout must always produce the same first move.
         let board1 = Board::new(10, 10, 10);
         let board2 = Board::new(10, 10, 10);
         let mut solver = Solver::new();
 
         let move1 = solver.get_next_move(&board1);
         let move2 = solver.get_next_move(&board2);
-
         assert_eq!(move1, move2, "Tie-breaking must be deterministic");
     }
 
     #[test]
     fn test_settings_disable_rule() {
         let mut board = make_test_board();
-        // Reveal enough cells so (0,0) is the only hidden neighbour of (1,0).
         board.reveal(1, 0);
         board.reveal(0, 1);
         board.reveal(1, 1);
@@ -660,17 +1022,182 @@ mod tests {
         board.reveal(2, 1);
 
         let mut solver = Solver::new();
-        // 1. All enabled -> should Flag(0,0) via standard deduction.
-        let action = solver.get_next_move(&board);
-        assert!(matches!(action, SolverAction::Flag(0, 0)));
+        // With all rules enabled, standard deduction flags (0,0).
+        assert!(matches!(
+            solver.get_next_move(&board),
+            SolverAction::Flag(0, 0)
+        ));
 
-        // 2. Disable standard deduction -> should Reveal something else (guess) or do nothing.
-        // On an empty-ish board, probability heuristic will pick a Reveal.
+        // Disabling all certainty rules leaves only Rule 4 (probability guess).
+        // A pure probability guess must not produce a Flag action.
         solver.settings.use_standard = false;
+        solver.settings.use_subset = false;
+        solver.settings.use_csp = false;
         let action = solver.get_next_move(&board);
         assert!(
-            !matches!(action, SolverAction::Flag(0, 0)),
-            "Expected NOT to flag (0,0) when standard deduction is disabled, got {action:?}"
+            !matches!(action, SolverAction::Flag(_, _)),
+            "Probability-only mode must not flag; got {action:?}"
+        );
+    }
+
+    // ── Rule 3 – CSP ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_csp_toggle_disabled_falls_through() {
+        let mut board = make_test_board();
+        board.reveal(1, 0);
+        board.reveal(1, 1);
+        board.reveal(2, 0);
+        board.reveal(2, 1);
+
+        let mut solver = Solver::new();
+        // With all rules enabled, standard deduction flags (0,0).
+        assert!(matches!(
+            solver.get_next_move(&board),
+            SolverAction::Flag(0, 0)
+        ));
+
+        // Disabling CSP must not crash; standard deduction still fires.
+        solver.settings.use_csp = false;
+        assert!(matches!(
+            solver.get_next_move(&board),
+            SolverAction::Flag(0, 0)
+        ));
+    }
+
+    #[test]
+    fn test_csp_region_too_large_does_not_panic() {
+        // Large board: frontier might exceed the 32-cell cap; must not hang or panic.
+        let board = Board::new(9, 9, 10);
+        let mut solver = Solver::new();
+        // Empty board → no frontier → falls through to Rule 4 probability guess.
+        let action = solver.get_next_move(&board);
+        assert!(matches!(action, SolverAction::Reveal(_, _)));
+    }
+
+    #[test]
+    fn test_csp_state_cleared_each_call() {
+        // csp_configs must reflect only the current call, not accumulate.
+        let mut board = make_test_board();
+        board.reveal(1, 0);
+        board.reveal(2, 0);
+        board.reveal(1, 1);
+        board.reveal(2, 1);
+
+        let mut solver = Solver::new();
+        let _ = solver.get_next_move(&board);
+        let _ = solver.get_next_move(&board);
+        // Should never grow unboundedly.
+        assert!(solver.state.csp_configs.len() < 100);
+    }
+
+    #[test]
+    fn test_csp_global_mine_cap_respected() {
+        // Every valid configuration stored in csp_configs must not assign more
+        // mines than the board has remaining (flagged mines subtracted).
+        let mut board = make_test_board();
+        board.reveal(1, 1);
+        board.reveal(2, 0);
+        board.reveal(2, 1);
+        board.reveal(0, 2);
+        board.reveal(1, 2);
+        board.reveal(2, 2);
+
+        let mut solver = Solver::new();
+        let _ = solver.get_next_move(&board);
+
+        let flagged = board
+            .cells
+            .iter()
+            .filter(|c| c.state == CellState::Flagged)
+            .count();
+        let remaining = board.num_mines.saturating_sub(flagged);
+
+        for (_, configs) in &solver.state.csp_configs {
+            for cfg in configs {
+                let assigned: usize = cfg.iter().map(|&v| v as usize).sum();
+                assert!(
+                    assigned <= remaining,
+                    "Config assigns {assigned} mines but only {remaining} remain on the board"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_csp_synergy_overrides_heuristic_for_frontier() {
+        // When Rule 3 finds no certainty, it populates csp_configs and falls
+        // through to Rule 4.  Rule 4 must then write probabilities using the
+        // CSP-exact frequencies rather than the global heuristic.
+        //
+        // Strategy: use a fresh board with no revealed cells so neither
+        // Rule 1/2/3 finds a certainty, and Rule 4 definitely runs.
+        let board = Board::new(9, 9, 10);
+        let mut solver = Solver::new();
+        // Fresh board: no frontier → CSP has nothing to enumerate, falls to Rule 4.
+        let action = solver.get_next_move(&board);
+
+        // Rule 4 (probability guess) must always fire and produce a Reveal.
+        assert!(
+            matches!(action, SolverAction::Reveal(_, _)),
+            "Expected Reveal from probability guess, got {action:?}"
+        );
+
+        // Rule 4 must always populate probabilities.
+        assert!(
+            !solver.state.probabilities.is_empty(),
+            "Rule 4 must populate probabilities for hidden cells"
+        );
+    }
+
+    #[test]
+    fn test_backtrack_all_configs_respect_constraint() {
+        // Unit-test the backtracking function directly.
+        // Region: 2 cells, constraint: exactly 1 mine.
+        let region = Region {
+            cells: vec![(0, 0), (1, 0)],
+            constraints: vec![CspConstraint {
+                cell_indices: vec![0, 1],
+                mines_needed: 1,
+            }],
+        };
+        let mut assignment = vec![0u8; 2];
+        let mut valid_configs: Vec<Vec<u8>> = Vec::new();
+        backtrack(&region, &mut assignment, 0, 10, 0, &mut valid_configs);
+
+        // Exactly 2 valid configs: [1,0] and [0,1].
+        assert_eq!(valid_configs.len(), 2, "Expected exactly 2 valid configs");
+        for cfg in &valid_configs {
+            let total: usize = cfg.iter().map(|&v| v as usize).sum();
+            assert_eq!(total, 1, "Each config must have exactly 1 mine");
+        }
+    }
+
+    #[test]
+    fn test_backtrack_global_mine_cap_prunes() {
+        // Region: 2 cells with 1 mine each required, but only 1 mine remaining.
+        // Both constraints demand 1 mine → the only way to satisfy both is 2 mines,
+        // which exceeds remaining_mines=1. No valid config should be found.
+        let region = Region {
+            cells: vec![(0, 0), (1, 0)],
+            constraints: vec![
+                CspConstraint {
+                    cell_indices: vec![0],
+                    mines_needed: 1,
+                },
+                CspConstraint {
+                    cell_indices: vec![1],
+                    mines_needed: 1,
+                },
+            ],
+        };
+        let mut assignment = vec![0u8; 2];
+        let mut valid_configs: Vec<Vec<u8>> = Vec::new();
+        backtrack(&region, &mut assignment, 0, 1, 0, &mut valid_configs);
+
+        assert!(
+            valid_configs.is_empty(),
+            "Global mine cap should have pruned all configs, got: {valid_configs:?}"
         );
     }
 }

@@ -374,9 +374,13 @@ impl eframe::App for MinesweeperApp {
                         ui.separator();
 
                         ui.label("Logic Tiers:");
-                        ui.checkbox(&mut settings.use_standard, "Standard Deduction");
-                        ui.checkbox(&mut settings.use_subset, "Subset Patterns");
-                        ui.checkbox(&mut settings.use_probability, "Probability/Heuristic");
+                        ui.checkbox(&mut settings.use_standard, "Rule 1: Standard Deduction");
+                        ui.checkbox(&mut settings.use_subset, "Rule 2: Subset Patterns");
+                        ui.checkbox(&mut settings.use_csp, "Rule 3: Constraint Satisfaction");
+                        ui.checkbox(
+                            &mut settings.use_probability,
+                            "Rule 4: Probability/Heuristic",
+                        );
 
                         ui.separator();
 
