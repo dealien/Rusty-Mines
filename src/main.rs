@@ -402,7 +402,7 @@ impl eframe::App for MinesweeperApp {
                 egui::ViewportId::from_hash_of("history_panel"),
                 egui::ViewportBuilder::default()
                     .with_title("Solver History")
-                    .with_inner_size([260.0_f32, 340.0]),
+                    .with_inner_size([320.0_f32, 340.0]),
                 |ctx, _class| {
                     if ctx.input(|i| i.viewport().close_requested()) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
