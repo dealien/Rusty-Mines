@@ -1,4 +1,4 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use divan::{Bencher, black_box};
 use rusty_mines::minesweeper::Board;
 use rusty_mines::solver::Solver;
 
@@ -34,120 +34,160 @@ fn generate_large_low_density_board() -> Board {
     board
 }
 
-fn bench_solver(c: &mut Criterion) {
-    let mut group = c.benchmark_group("solver");
-
-    let mid_board = generate_mid_size_board();
-    let large_dense_board = generate_large_high_density_board();
-    let empty_board = generate_empty_board();
-    let large_low_density_board = generate_large_low_density_board();
-
-    // Standard Deduction
-    group.bench_function("mid_board_standard_deduction", |b| {
-        b.iter(|| {
+// Standard Deduction
+#[divan::bench]
+fn bench_mid_board_standard_deduction(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
             let mut solver = Solver::new();
             solver.settings.use_subset = false;
             solver.settings.use_csp = false;
             solver.settings.use_probability = false;
-            black_box(solver.get_next_move(black_box(&mid_board)));
+            (solver, generate_mid_size_board())
         })
-    });
-
-    group.bench_function("large_dense_standard_deduction", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_subset = false;
-            solver.settings.use_csp = false;
-            solver.settings.use_probability = false;
-            black_box(solver.get_next_move(black_box(&large_dense_board)));
-        })
-    });
-
-    // Pattern Matching
-    group.bench_function("mid_board_pattern_matching", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_csp = false;
-            solver.settings.use_probability = false;
-            black_box(solver.get_next_move(black_box(&mid_board)));
-        })
-    });
-
-    group.bench_function("large_dense_pattern_matching", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_csp = false;
-            solver.settings.use_probability = false;
-            black_box(solver.get_next_move(black_box(&large_dense_board)));
-        })
-    });
-
-    // CSP Deduction
-    group.bench_function("mid_board_csp_deduction", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_subset = false;
-            solver.settings.use_probability = false;
-            black_box(solver.get_next_move(black_box(&mid_board)));
-        })
-    });
-
-    group.bench_function("large_dense_csp_deduction", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_subset = false;
-            solver.settings.use_probability = false;
-            black_box(solver.get_next_move(black_box(&large_dense_board)));
-        })
-    });
-
-    // Probability Guess
-    group.bench_function("mid_board_probability_guess", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_subset = false;
-            solver.settings.use_csp = false;
-            black_box(solver.get_next_move(black_box(&mid_board)));
-        })
-    });
-
-    group.bench_function("large_dense_probability_guess", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_subset = false;
-            solver.settings.use_csp = false;
-            black_box(solver.get_next_move(black_box(&large_dense_board)));
-        })
-    });
-
-    group.bench_function("empty_board_probability_guess", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_subset = false;
-            solver.settings.use_csp = false;
-            black_box(solver.get_next_move(black_box(&empty_board)));
-        })
-    });
-
-    group.bench_function("large_low_density_probability_guess", |b| {
-        b.iter(|| {
-            let mut solver = Solver::new();
-            solver.settings.use_standard = false;
-            solver.settings.use_subset = false;
-            solver.settings.use_csp = false;
-            black_box(solver.get_next_move(black_box(&large_low_density_board)));
-        })
-    });
-
-    group.finish();
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
 }
 
-criterion_group!(benches, bench_solver);
-criterion_main!(benches);
+#[divan::bench]
+fn bench_large_dense_standard_deduction(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_subset = false;
+            solver.settings.use_csp = false;
+            solver.settings.use_probability = false;
+            (solver, generate_large_high_density_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+// Pattern Matching
+#[divan::bench]
+fn bench_mid_board_pattern_matching(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_csp = false;
+            solver.settings.use_probability = false;
+            (solver, generate_mid_size_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+#[divan::bench]
+fn bench_large_dense_pattern_matching(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_csp = false;
+            solver.settings.use_probability = false;
+            (solver, generate_large_high_density_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+// CSP Deduction
+#[divan::bench]
+fn bench_mid_board_csp_deduction(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_subset = false;
+            solver.settings.use_probability = false;
+            (solver, generate_mid_size_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+#[divan::bench]
+fn bench_large_dense_csp_deduction(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_subset = false;
+            solver.settings.use_probability = false;
+            (solver, generate_large_high_density_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+// Probability Guess
+#[divan::bench]
+fn bench_mid_board_probability_guess(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_subset = false;
+            solver.settings.use_csp = false;
+            (solver, generate_mid_size_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+#[divan::bench]
+fn bench_large_dense_probability_guess(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_subset = false;
+            solver.settings.use_csp = false;
+            (solver, generate_large_high_density_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+#[divan::bench]
+fn bench_empty_board_probability_guess(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_subset = false;
+            solver.settings.use_csp = false;
+            (solver, generate_empty_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+#[divan::bench]
+fn bench_large_low_density_probability_guess(bencher: Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut solver = Solver::new();
+            solver.settings.use_standard = false;
+            solver.settings.use_subset = false;
+            solver.settings.use_csp = false;
+            (solver, generate_large_low_density_board())
+        })
+        .bench_local_values(|(mut solver, board)| {
+            black_box(solver.get_next_move(black_box(&board)));
+        });
+}
+
+fn main() {
+    divan::main();
+}

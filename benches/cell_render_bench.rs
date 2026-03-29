@@ -1,4 +1,4 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use divan::{Bencher, black_box};
 
 // We will replicate the logic inside `src/main.rs:140` to benchmark it standalone
 // For simplicity we create a mock version of the `Cell` struct.
@@ -61,8 +61,8 @@ fn render_cell_new(cell: &Cell) -> (&'static str, u32) {
     }
 }
 
-pub fn criterion_benchmark(c: &mut Criterion) {
-    let cells = vec![
+fn get_mock_cells() -> Vec<Cell> {
+    vec![
         Cell {
             is_mine: false,
             adjacent_mines: 0,
@@ -103,24 +103,31 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             adjacent_mines: 8,
             state: CellState::Revealed,
         },
-    ];
+    ]
+}
 
-    c.bench_function("render_cell_old", |b| {
-        b.iter(|| {
+#[divan::bench]
+fn bench_render_cell_old(bencher: Bencher) {
+    bencher
+        .with_inputs(get_mock_cells)
+        .bench_local_values(|cells| {
             for cell in &cells {
                 black_box(render_cell_old(black_box(cell)));
             }
         });
-    });
+}
 
-    c.bench_function("render_cell_new", |b| {
-        b.iter(|| {
+#[divan::bench]
+fn bench_render_cell_new(bencher: Bencher) {
+    bencher
+        .with_inputs(get_mock_cells)
+        .bench_local_values(|cells| {
             for cell in &cells {
                 black_box(render_cell_new(black_box(cell)));
             }
         });
-    });
 }
 
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
+fn main() {
+    divan::main();
+}
