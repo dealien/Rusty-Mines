@@ -153,20 +153,11 @@ fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
     let neighbours = |cx: usize, cy: usize| -> (usize, Vec<(usize, usize)>) {
         let mut flags = 0usize;
         let mut hidden = Vec::new();
-        for dy in -1_i32..=1 {
-            for dx in -1_i32..=1 {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let nx = cx as i32 + dx;
-                let ny = cy as i32 + dy;
-                if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32 {
-                    match board.get_cell(nx as usize, ny as usize).map(|c| c.state) {
-                        Some(CellState::Flagged) => flags += 1,
-                        Some(CellState::Hidden) => hidden.push((nx as usize, ny as usize)),
-                        _ => {}
-                    }
-                }
+        for (nx, ny) in board.adjacent_cells(cx, cy) {
+            match board.get_cell(nx, ny).map(|c| c.state) {
+                Some(CellState::Flagged) => flags += 1,
+                Some(CellState::Hidden) => hidden.push((nx, ny)),
+                _ => {}
             }
         }
         (flags, hidden)

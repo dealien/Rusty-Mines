@@ -82,6 +82,29 @@ impl Board {
         y * self.width + x
     }
 
+    /// Returns an iterator over the valid adjacent coordinates for a given cell.
+    pub fn adjacent_cells(&self, x: usize, y: usize) -> impl Iterator<Item = (usize, usize)> {
+        let width = self.width as isize;
+        let height = self.height as isize;
+        let x = x as isize;
+        let y = y as isize;
+
+        (-1..=1).flat_map(move |dy| {
+            (-1..=1).filter_map(move |dx| {
+                if dx == 0 && dy == 0 {
+                    return None;
+                }
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx >= 0 && nx < width && ny >= 0 && ny < height {
+                    Some((nx as usize, ny as usize))
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
     pub fn get_cell(&self, x: usize, y: usize) -> Option<&Cell> {
         if x < self.width && y < self.height {
             Some(&self.cells[self.index(x, y)])
@@ -134,25 +157,10 @@ impl Board {
                 }
 
                 let mut count = 0;
-                for dy in -1..=1 {
-                    for dx in -1..=1 {
-                        if dx == 0 && dy == 0 {
-                            continue;
-                        }
-
-                        let nx = x as isize + dx;
-                        let ny = y as isize + dy;
-
-                        if nx >= 0
-                            && nx < self.width as isize
-                            && ny >= 0
-                            && ny < self.height as isize
-                        {
-                            let n_idx = self.index(nx as usize, ny as usize);
-                            if self.cells[n_idx].is_mine {
-                                count += 1;
-                            }
-                        }
+                for (nx, ny) in self.adjacent_cells(x, y) {
+                    let n_idx = self.index(nx, ny);
+                    if self.cells[n_idx].is_mine {
+                        count += 1;
                     }
                 }
 
@@ -193,19 +201,9 @@ impl Board {
 
         if self.cells[idx].adjacent_mines == 0 {
             // Flood fill for empty cells
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    if dx == 0 && dy == 0 {
-                        continue;
-                    }
-
-                    let nx = x as isize + dx;
-                    let ny = y as isize + dy;
-
-                    if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
-                        self.reveal(nx as usize, ny as usize);
-                    }
-                }
+            let adjacent = self.adjacent_cells(x, y).collect::<Vec<_>>();
+            for (nx, ny) in adjacent {
+                self.reveal(nx, ny);
             }
         }
 
@@ -275,13 +273,10 @@ mod tests {
         assert_eq!(mines, 5);
 
         // Ensure first click area is safe
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let nx = 2 + dx;
-                let ny = 2 + dy;
-                let cell = board.get_cell(nx as usize, ny as usize).unwrap();
-                assert!(!cell.is_mine);
-            }
+        assert!(!board.get_cell(2, 2).unwrap().is_mine);
+        for (nx, ny) in board.adjacent_cells(2, 2) {
+            let cell = board.get_cell(nx, ny).unwrap();
+            assert!(!cell.is_mine);
         }
     }
 
