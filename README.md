@@ -1,5 +1,7 @@
 # 🦀💣 Rusty Mines
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/dealien/Rusty-Mines?utm_source=badge)
+
 Welcome to **Rusty Mines**—a modern, blazingly fast Minesweeper clone built in Rust using the `egui` framework. Whether you want to click away or watch an AI dismantle the minefield, this project has you covered. 🤖✨
 
 ## ✨ Features
