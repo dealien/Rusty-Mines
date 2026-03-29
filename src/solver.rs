@@ -896,20 +896,7 @@ fn backtrack(
 
 /// Return all valid `(x, y)` neighbours of a cell within the board bounds.
 fn get_neighbours(board: &Board, x: usize, y: usize) -> Vec<(usize, usize)> {
-    let mut result = Vec::with_capacity(8);
-    for dy in -1_i32..=1 {
-        for dx in -1_i32..=1 {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-            let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
-            if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32 {
-                result.push((nx as usize, ny as usize));
-            }
-        }
-    }
-    result
+    board.adjacent_cells(x, y).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -938,20 +925,10 @@ mod tests {
                     continue;
                 }
                 let mut count = 0u8;
-                for dy in -1_i32..=1 {
-                    for dx in -1_i32..=1 {
-                        if dx == 0 && dy == 0 {
-                            continue;
-                        }
-                        let nx = cx as i32 + dx;
-                        let ny = cy as i32 + dy;
-                        if nx >= 0 && nx < board.width as i32 && ny >= 0 && ny < board.height as i32
-                        {
-                            let n_idx = board.index(nx as usize, ny as usize);
-                            if board.cells[n_idx].is_mine {
-                                count += 1;
-                            }
-                        }
+                for (nx, ny) in board.adjacent_cells(cx, cy) {
+                    let n_idx = board.index(nx, ny);
+                    if board.cells[n_idx].is_mine {
+                        count += 1;
                     }
                 }
                 board.cells[self_idx].adjacent_mines = count;
