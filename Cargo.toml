@@ -6,3 +6,10 @@ edition = "2024"
 [dependencies]
 eframe = "0.28.1"
 rand = "0.8.5"
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "cell_render_bench"
+harness = false
