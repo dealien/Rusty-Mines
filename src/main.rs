@@ -602,23 +602,20 @@ impl eframe::App for MinesweeperApp {
                             for x in 0..self.board.width {
                                 let cell = self.board.get_cell(x, y).unwrap();
 
+                                const NUMBER_STRINGS: [&str; 9] = [
+                                    "   ", " 1 ", " 2 ", " 3 ", " 4 ", " 5 ", " 6 ", " 7 ", " 8 ",
+                                ];
                                 let (text, text_color) = match cell.state {
-                                    CellState::Hidden => {
-                                        ("   ".to_string(), egui::Color32::from_gray(200))
-                                    }
-                                    CellState::Flagged => {
-                                        (" 🚩".to_string(), egui::Color32::from_gray(200))
-                                    }
+                                    CellState::Hidden => ("   ", egui::Color32::from_gray(200)),
+                                    CellState::Flagged => (" 🚩", egui::Color32::from_gray(200)),
                                     CellState::Revealed => {
                                         if cell.is_mine {
-                                            (" 💣".to_string(), egui::Color32::RED)
+                                            (" 💣", egui::Color32::RED)
                                         } else if cell.adjacent_mines > 0 {
-                                            (
-                                                format!(" {} ", cell.adjacent_mines),
-                                                get_color(cell.adjacent_mines),
-                                            )
+                                            let idx = (cell.adjacent_mines as usize).min(8);
+                                            (NUMBER_STRINGS[idx], get_color(cell.adjacent_mines))
                                         } else {
-                                            ("   ".to_string(), egui::Color32::from_gray(60))
+                                            ("   ", egui::Color32::from_gray(60))
                                         }
                                     }
                                 };
