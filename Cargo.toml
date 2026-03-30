@@ -17,3 +17,7 @@ harness = false
 [[bench]]
 name = "solver_bench"
 harness = false
+
+[[bench]]
+name = "core_bench"
+harness = false
