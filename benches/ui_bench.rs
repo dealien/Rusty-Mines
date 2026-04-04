@@ -81,7 +81,10 @@ fn generate_deterministic_board(
         i += 1;
     }
 
-    assert_eq!(mines_placed, num_mines, "Failed to place all deterministic mines.");
+    assert_eq!(
+        mines_placed, num_mines,
+        "Failed to place all deterministic mines."
+    );
 
     // Implement calculate_adjacent_mines here:
     for y in 0..height {
