@@ -9,11 +9,33 @@ use rusty_mines::ui_helpers::{apply_action, compute_probabilities, get_color, pr
 fn generate_deterministic_board(
     width: usize,
     height: usize,
-    num_mines: usize,
+    mut num_mines: usize,
     reveal_x: usize,
     reveal_y: usize,
 ) -> Board {
+    let size = width * height;
+
+    // Calculate the actual size of the protected region around the reveal point
+    let mut protected_count = 0;
+    for y in 0..height {
+        for x in 0..width {
+            if (x as isize - reveal_x as isize).abs() <= 1
+                && (y as isize - reveal_y as isize).abs() <= 1
+            {
+                protected_count += 1;
+            }
+        }
+    }
+
+    let max_mines = size.saturating_sub(protected_count);
+    if num_mines > max_mines {
+        num_mines = max_mines;
+    }
+
     let mut board = Board::new(width, height, num_mines).unwrap();
+    // Update board.num_mines if we clamped it
+    board.num_mines = num_mines;
+
     let mut mines_placed = 0;
 
     // Simple deterministic pattern: place mines sequentially skipping some cells
@@ -30,7 +52,7 @@ fn generate_deterministic_board(
             }
 
             // Distribute mines somewhat evenly based on target density
-            let density = num_mines as f64 / (width * height) as f64;
+            let density = num_mines as f64 / size as f64;
             let step = (1.0 / density).max(1.0) as usize;
 
             if (x + y * width) % step == 0 {
@@ -45,7 +67,7 @@ fn generate_deterministic_board(
 
     // If we missed the target because of the step, fill the rest deterministically
     let mut i = 0;
-    while mines_placed < num_mines {
+    while mines_placed < num_mines && i < size {
         let x = i % width;
         let y = i / width;
         if (x as isize - reveal_x as isize).abs() > 1 || (y as isize - reveal_y as isize).abs() > 1
@@ -58,6 +80,8 @@ fn generate_deterministic_board(
         }
         i += 1;
     }
+
+    assert_eq!(mines_placed, num_mines, "Failed to place all deterministic mines.");
 
     // Implement calculate_adjacent_mines here:
     for y in 0..height {
