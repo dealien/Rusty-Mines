@@ -5,3 +5,4 @@
 
 pub mod minesweeper;
 pub mod solver;
+pub mod ui_helpers;
