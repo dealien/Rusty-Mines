@@ -196,39 +196,31 @@ impl Solver {
                     continue;
                 }
 
-                let neighbours = get_neighbours(board, x, y);
-                let flagged: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .cloned()
-                    .collect();
-                let hidden: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
+                let mut flag_count = 0;
+                let mut hidden = Vec::new();
+
+                for (nx, ny) in board.adjacent_cells(x, y) {
+                    if let Some(c) = board.get_cell(nx, ny) {
+                        match c.state {
+                            CellState::Flagged => flag_count += 1,
+                            CellState::Hidden => hidden.push((nx, ny)),
+                            _ => {}
+                        }
+                    }
+                }
 
                 let number = cell.adjacent_mines as usize;
-                let flag_count = flagged.len();
                 let hidden_count = hidden.len();
 
                 if flag_count == number && !hidden.is_empty() {
                     // All mines accounted for – reveal the rest.
-                    self.state.highlighted_cells.extend(neighbours.iter());
+                    self.state.highlighted_cells.extend(board.adjacent_cells(x, y));
                     return Some(SolverAction::Reveal(hidden[0].0, hidden[0].1));
                 }
 
                 if flag_count + hidden_count == number && !hidden.is_empty() {
                     // Every hidden neighbour must be a mine.
-                    self.state.highlighted_cells.extend(neighbours.iter());
+                    self.state.highlighted_cells.extend(board.adjacent_cells(x, y));
                     return Some(SolverAction::Flag(hidden[0].0, hidden[0].1));
                 }
             }
@@ -255,24 +247,20 @@ impl Solver {
                 if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
                     return None;
                 }
-                let neighbours = get_neighbours(board, x, y);
-                let flag_count = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .count();
-                let hidden: HashSet<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
+                let mut flag_count = 0;
+                let mut hidden = HashSet::new();
+
+                for (nx, ny) in board.adjacent_cells(x, y) {
+                    if let Some(c) = board.get_cell(nx, ny) {
+                        match c.state {
+                            CellState::Flagged => flag_count += 1,
+                            CellState::Hidden => {
+                                hidden.insert((nx, ny));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
 
                 if hidden.is_empty() {
                     return None;
@@ -476,24 +464,18 @@ impl Solver {
                 if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
                     continue;
                 }
-                let neighbours = get_neighbours(board, x, y);
-                let flag_count = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .count();
-                let hidden: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
+
+                let mut flag_count = 0;
+                let mut hidden = Vec::new();
+                for (nx, ny) in board.adjacent_cells(x, y) {
+                    if let Some(c) = board.get_cell(nx, ny) {
+                        match c.state {
+                            CellState::Flagged => flag_count += 1,
+                            CellState::Hidden => hidden.push((nx, ny)),
+                            _ => {}
+                        }
+                    }
+                }
 
                 if hidden.is_empty() {
                     continue;
@@ -535,11 +517,10 @@ impl Solver {
                         }
                         _ => continue,
                     };
-                    let all_neighbours = get_neighbours(board, x, y);
                     let mut flag_count = 0usize;
                     let mut uncertain: Vec<(usize, usize)> = Vec::new();
 
-                    for &pos in &all_neighbours {
+                    for pos in board.adjacent_cells(x, y) {
                         match board.get_cell(pos.0, pos.1).map(|c| c.state) {
                             Some(CellState::Flagged) => flag_count += 1,
                             Some(CellState::Hidden) => {
@@ -614,17 +595,15 @@ impl Solver {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| {
                     // Tie-break 1: Most hidden neighbours (information yield).
-                    let a_hidden = get_neighbours(board, ax, ay)
-                        .iter()
-                        .filter(|&&(nx, ny)| {
+                    let a_hidden = board.adjacent_cells(ax, ay)
+                        .filter(|&(nx, ny)| {
                             board
                                 .get_cell(nx, ny)
                                 .is_some_and(|c| c.state == CellState::Hidden)
                         })
                         .count();
-                    let b_hidden = get_neighbours(board, bx, by)
-                        .iter()
-                        .filter(|&&(nx, ny)| {
+                    let b_hidden = board.adjacent_cells(bx, by)
+                        .filter(|&(nx, ny)| {
                             board
                                 .get_cell(nx, ny)
                                 .is_some_and(|c| c.state == CellState::Hidden)
@@ -691,24 +670,20 @@ fn build_frontier_constraints(board: &Board) -> Vec<(HashSet<(usize, usize)>, us
                 }
                 _ => continue,
             };
-            let neighbours = get_neighbours(board, x, y);
-            let flag_count = neighbours
-                .iter()
-                .filter(|&&(nx, ny)| {
-                    board
-                        .get_cell(nx, ny)
-                        .is_some_and(|c| c.state == CellState::Flagged)
-                })
-                .count();
-            let hidden: HashSet<(usize, usize)> = neighbours
-                .iter()
-                .filter(|&&(nx, ny)| {
-                    board
-                        .get_cell(nx, ny)
-                        .is_some_and(|c| c.state == CellState::Hidden)
-                })
-                .cloned()
-                .collect();
+            let mut flag_count = 0;
+            let mut hidden = HashSet::new();
+
+            for (nx, ny) in board.adjacent_cells(x, y) {
+                if let Some(c) = board.get_cell(nx, ny) {
+                    match c.state {
+                        CellState::Flagged => flag_count += 1,
+                        CellState::Hidden => {
+                            hidden.insert((nx, ny));
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             if hidden.is_empty() {
                 continue;
@@ -890,14 +865,6 @@ fn backtrack(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// General helper utilities
-// ---------------------------------------------------------------------------
-
-/// Return all valid `(x, y)` neighbours of a cell within the board bounds.
-fn get_neighbours(board: &Board, x: usize, y: usize) -> Vec<(usize, usize)> {
-    board.adjacent_cells(x, y).collect()
-}
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -991,7 +958,7 @@ mod tests {
         let action = solver.get_next_move(&board);
 
         if let SolverAction::Reveal(x, y) = action {
-            let hidden_count = get_neighbours(&board, x, y).len();
+            let hidden_count = board.adjacent_cells(x, y).count();
             assert_eq!(
                 hidden_count, 8,
                 "Expected an interior cell (8 neighbours), got ({x},{y}) with {hidden_count}"

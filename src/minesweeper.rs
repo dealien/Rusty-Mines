@@ -179,35 +179,44 @@ impl Board {
             return;
         }
 
-        let idx = self.index(x, y);
+        let mut stack = vec![(x, y)];
 
-        if self.cells[idx].state != CellState::Hidden {
-            return; // Can't reveal flagged or already revealed cells
-        }
-
-        if self.first_click {
-            self.place_mines_after_first_click(x, y);
-        }
-
-        self.cells[idx].state = CellState::Revealed;
-
-        if self.cells[idx].is_mine {
-            self.state = GameState::Lost;
-            self.reveal_all_mines();
-            return;
-        } else {
-            self.unrevealed_safe_cells -= 1;
-        }
-
-        if self.cells[idx].adjacent_mines == 0 {
-            // Flood fill for empty cells
-            let adjacent = self.adjacent_cells(x, y).collect::<Vec<_>>();
-            for (nx, ny) in adjacent {
-                self.reveal(nx, ny);
+        while let Some((cx, cy)) = stack.pop() {
+            if self.state != GameState::Playing {
+                break;
             }
-        }
 
-        self.check_win();
+            let idx = self.index(cx, cy);
+
+            if self.cells[idx].state != CellState::Hidden {
+                continue;
+            }
+
+            if self.first_click {
+                self.place_mines_after_first_click(cx, cy);
+            }
+
+            self.cells[idx].state = CellState::Revealed;
+
+            if self.cells[idx].is_mine {
+                self.state = GameState::Lost;
+                self.reveal_all_mines();
+                break;
+            } else {
+                self.unrevealed_safe_cells -= 1;
+            }
+
+            if self.cells[idx].adjacent_mines == 0 {
+                // Flood fill for empty cells
+                for (nx, ny) in self.adjacent_cells(cx, cy) {
+                    if self.cells[self.index(nx, ny)].state == CellState::Hidden {
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+
+            self.check_win();
+        }
     }
 
     pub fn toggle_flag(&mut self, x: usize, y: usize) {
