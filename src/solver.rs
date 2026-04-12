@@ -214,13 +214,17 @@ impl Solver {
 
                 if flag_count == number && !hidden.is_empty() {
                     // All mines accounted for – reveal the rest.
-                    self.state.highlighted_cells.extend(board.adjacent_cells(x, y));
+                    self.state
+                        .highlighted_cells
+                        .extend(board.adjacent_cells(x, y));
                     return Some(SolverAction::Reveal(hidden[0].0, hidden[0].1));
                 }
 
                 if flag_count + hidden_count == number && !hidden.is_empty() {
                     // Every hidden neighbour must be a mine.
-                    self.state.highlighted_cells.extend(board.adjacent_cells(x, y));
+                    self.state
+                        .highlighted_cells
+                        .extend(board.adjacent_cells(x, y));
                     return Some(SolverAction::Flag(hidden[0].0, hidden[0].1));
                 }
             }
@@ -595,14 +599,16 @@ impl Solver {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| {
                     // Tie-break 1: Most hidden neighbours (information yield).
-                    let a_hidden = board.adjacent_cells(ax, ay)
+                    let a_hidden = board
+                        .adjacent_cells(ax, ay)
                         .filter(|&(nx, ny)| {
                             board
                                 .get_cell(nx, ny)
                                 .is_some_and(|c| c.state == CellState::Hidden)
                         })
                         .count();
-                    let b_hidden = board.adjacent_cells(bx, by)
+                    let b_hidden = board
+                        .adjacent_cells(bx, by)
                         .filter(|&(nx, ny)| {
                             board
                                 .get_cell(nx, ny)
@@ -864,7 +870,6 @@ fn backtrack(
     }
     Ok(())
 }
-
 
 // ---------------------------------------------------------------------------
 // Unit tests
