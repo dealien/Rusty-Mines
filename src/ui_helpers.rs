@@ -85,20 +85,6 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
         }
     }
 
-    // Shared neighbour-gathering closure.
-    let neighbours = |cx: usize, cy: usize| -> (usize, Vec<(usize, usize)>) {
-        let mut flags = 0usize;
-        let mut hidden = Vec::new();
-        for (nx, ny) in board.adjacent_cells(cx, cy) {
-            match board.get_cell(nx, ny).map(|c| c.state) {
-                Some(CellState::Flagged) => flags += 1,
-                Some(CellState::Hidden) => hidden.push((nx, ny)),
-                _ => {}
-            }
-        }
-        (flags, hidden)
-    };
-
     // Pass 1 – local max-blend heuristic.
     for y in 0..board.height {
         for x in 0..board.width {
@@ -108,14 +94,31 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
                 }
                 _ => continue,
             };
-            let (flag_count, hidden) = neighbours(x, y);
-            if hidden.is_empty() {
+
+            let mut flag_count = 0;
+            let mut hidden = [(0, 0); 8];
+            let mut hidden_count = 0;
+
+            for (nx, ny) in board.adjacent_cells(x, y) {
+                match board.get_cell(nx, ny).map(|c| c.state) {
+                    Some(CellState::Flagged) => flag_count += 1,
+                    Some(CellState::Hidden) => {
+                        hidden[hidden_count] = (nx, ny);
+                        hidden_count += 1;
+                    }
+                    _ => {}
+                }
+            }
+
+            if hidden_count == 0 {
                 continue;
             }
             let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
-            let local_prob = effective as f32 / hidden.len() as f32;
-            for pos in &hidden {
-                probs.entry(*pos).and_modify(|p| *p = p.max(local_prob));
+            let local_prob = effective as f32 / hidden_count as f32;
+            for i in 0..hidden_count {
+                probs
+                    .entry(hidden[i])
+                    .and_modify(|p| *p = p.max(local_prob));
             }
         }
     }
@@ -142,28 +145,38 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
                     }
                     _ => continue,
                 };
-                // neighbours() returns (base_flag_count, all_hidden_neighbours).
-                let (base_flags, raw_hidden) = neighbours(x, y);
-                let mut extra_flags = 0usize;
-                let mut uncertain: Vec<(usize, usize)> = Vec::new();
-                for pos in &raw_hidden {
-                    if confirmed_mine.contains(pos) {
-                        extra_flags += 1;
-                    } else if !confirmed_safe.contains(pos) {
-                        uncertain.push(*pos);
+                let mut base_flags = 0;
+                let mut extra_flags = 0;
+                let mut uncertain = [(0, 0); 8];
+                let mut uncertain_count = 0;
+
+                for (nx, ny) in board.adjacent_cells(x, y) {
+                    match board.get_cell(nx, ny).map(|c| c.state) {
+                        Some(CellState::Flagged) => base_flags += 1,
+                        Some(CellState::Hidden) => {
+                            let pos = (nx, ny);
+                            if confirmed_mine.contains(&pos) {
+                                extra_flags += 1;
+                            } else if !confirmed_safe.contains(&pos) {
+                                uncertain[uncertain_count] = pos;
+                                uncertain_count += 1;
+                            }
+                        }
+                        _ => {}
                     }
                 }
+
                 let effective =
                     (cell.adjacent_mines as usize).saturating_sub(base_flags + extra_flags);
                 if effective == 0 {
-                    for pos in &uncertain {
-                        if confirmed_safe.insert(*pos) {
+                    for i in 0..uncertain_count {
+                        if confirmed_safe.insert(uncertain[i]) {
                             changed = true;
                         }
                     }
-                } else if !uncertain.is_empty() && effective == uncertain.len() {
-                    for pos in &uncertain {
-                        if confirmed_mine.insert(*pos) {
+                } else if uncertain_count > 0 && effective == uncertain_count {
+                    for i in 0..uncertain_count {
+                        if confirmed_mine.insert(uncertain[i]) {
                             changed = true;
                         }
                     }

@@ -83,7 +83,11 @@ impl Board {
     }
 
     /// Returns an iterator over the valid adjacent coordinates for a given cell.
-    pub fn adjacent_cells(&self, x: usize, y: usize) -> impl Iterator<Item = (usize, usize)> {
+    pub fn adjacent_cells(
+        &self,
+        x: usize,
+        y: usize,
+    ) -> impl Iterator<Item = (usize, usize)> + use<> {
         let width = self.width as isize;
         let height = self.height as isize;
         let x = x as isize;
@@ -103,6 +107,29 @@ impl Board {
                 }
             })
         })
+    }
+
+    /// Returns an iterator over valid adjacent coordinates that have a specific state.
+    pub fn adjacent_cells_with_state(
+        &self,
+        x: usize,
+        y: usize,
+        state: CellState,
+    ) -> impl Iterator<Item = (usize, usize)> + use<'_> {
+        self.adjacent_cells(x, y)
+            .filter(move |&(nx, ny)| self.cells[self.index(nx, ny)].state == state)
+    }
+
+    /// Counts valid adjacent cells with a specific state.
+    pub fn count_adjacent_with_state(&self, x: usize, y: usize, state: CellState) -> usize {
+        self.adjacent_cells_with_state(x, y, state).count()
+    }
+
+    /// Counts valid adjacent mines.
+    pub fn count_adjacent_mines(&self, x: usize, y: usize) -> u8 {
+        self.adjacent_cells(x, y)
+            .filter(|&(nx, ny)| self.cells[self.index(nx, ny)].is_mine)
+            .count() as u8
     }
 
     pub fn get_cell(&self, x: usize, y: usize) -> Option<&Cell> {
@@ -152,20 +179,11 @@ impl Board {
     fn calculate_adjacent_mines(&mut self) {
         for y in 0..self.height {
             for x in 0..self.width {
-                if self.cells[self.index(x, y)].is_mine {
+                let idx = self.index(x, y);
+                if self.cells[idx].is_mine {
                     continue;
                 }
-
-                let mut count = 0;
-                for (nx, ny) in self.adjacent_cells(x, y) {
-                    let n_idx = self.index(nx, ny);
-                    if self.cells[n_idx].is_mine {
-                        count += 1;
-                    }
-                }
-
-                let idx = self.index(x, y);
-                self.cells[idx].adjacent_mines = count;
+                self.cells[idx].adjacent_mines = self.count_adjacent_mines(x, y);
             }
         }
     }
@@ -205,10 +223,21 @@ impl Board {
             stack.push((x, y));
 
             while let Some((cx, cy)) = stack.pop() {
-                for (nx, ny) in self.adjacent_cells(cx, cy) {
+                // Gather valid neighbors into a stack array first to satisfy borrow checker.
+                // We use adjacent_cells_with_state to filter only Hidden ones.
+                let mut neighbors = [(0, 0); 8];
+                let mut count = 0;
+                for pos in self.adjacent_cells_with_state(cx, cy, CellState::Hidden) {
+                    neighbors[count] = pos;
+                    count += 1;
+                }
+
+                for i in 0..count {
+                    let (nx, ny) = neighbors[i];
                     let n_idx = self.index(nx, ny);
+                    // All neighbors of a 0-cell are guaranteed safe.
+                    // We must check state again because a cell could have been pushed multiple times.
                     if self.cells[n_idx].state == CellState::Hidden {
-                        // All neighbors of a 0-cell are guaranteed safe
                         self.cells[n_idx].state = CellState::Revealed;
                         self.unrevealed_safe_cells -= 1;
                         if self.cells[n_idx].adjacent_mines == 0 {

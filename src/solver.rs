@@ -196,21 +196,13 @@ impl Solver {
                     continue;
                 }
 
-                let mut flag_count = 0;
+                let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
                 let mut hidden = [(0, 0); 8];
                 let mut hidden_count = 0;
 
-                for (nx, ny) in board.adjacent_cells(x, y) {
-                    if let Some(c) = board.get_cell(nx, ny) {
-                        match c.state {
-                            CellState::Flagged => flag_count += 1,
-                            CellState::Hidden => {
-                                hidden[hidden_count] = (nx, ny);
-                                hidden_count += 1;
-                            }
-                            _ => {}
-                        }
-                    }
+                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                    hidden[hidden_count] = pos;
+                    hidden_count += 1;
                 }
 
                 let number = cell.adjacent_mines as usize;
@@ -472,20 +464,12 @@ impl Solver {
                     continue;
                 }
 
-                let mut flag_count = 0;
+                let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
                 let mut hidden = [(0, 0); 8];
                 let mut hidden_count = 0;
-                for (nx, ny) in board.adjacent_cells(x, y) {
-                    if let Some(c) = board.get_cell(nx, ny) {
-                        match c.state {
-                            CellState::Flagged => flag_count += 1,
-                            CellState::Hidden => {
-                                hidden[hidden_count] = (nx, ny);
-                                hidden_count += 1;
-                            }
-                            _ => {}
-                        }
-                    }
+                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                    hidden[hidden_count] = pos;
+                    hidden_count += 1;
                 }
 
                 if hidden_count == 0 {
@@ -530,24 +514,18 @@ impl Solver {
                         }
                         _ => continue,
                     };
-                    let mut flag_count = 0usize;
+                    let mut flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
                     let mut uncertain = [(0, 0); 8];
                     let mut uncertain_count = 0;
 
-                    for pos in board.adjacent_cells(x, y) {
-                        match board.get_cell(pos.0, pos.1).map(|c| c.state) {
-                            Some(CellState::Flagged) => flag_count += 1,
-                            Some(CellState::Hidden) => {
-                                if confirmed_mine.contains(&pos) {
-                                    flag_count += 1; // treat as additional flag
-                                } else if !confirmed_safe.contains(&pos) {
-                                    uncertain[uncertain_count] = pos;
-                                    uncertain_count += 1;
-                                }
-                                // confirmed_safe cells are excluded from uncertainty
-                            }
-                            _ => {}
+                    for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                        if confirmed_mine.contains(&pos) {
+                            flag_count += 1; // treat as additional flag
+                        } else if !confirmed_safe.contains(&pos) {
+                            uncertain[uncertain_count] = pos;
+                            uncertain_count += 1;
                         }
+                        // confirmed_safe cells are excluded from uncertainty
                     }
 
                     let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
@@ -687,24 +665,15 @@ fn build_frontier_constraints(board: &Board) -> Vec<(HashSet<(usize, usize)>, us
                 }
                 _ => continue,
             };
-            let mut flag_count = 0;
-            let mut hidden = HashSet::new();
 
-            for (nx, ny) in board.adjacent_cells(x, y) {
-                if let Some(c) = board.get_cell(nx, ny) {
-                    match c.state {
-                        CellState::Flagged => flag_count += 1,
-                        CellState::Hidden => {
-                            hidden.insert((nx, ny));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
+            let hidden: HashSet<_> = board
+                .adjacent_cells_with_state(x, y, CellState::Hidden)
+                .collect();
             if hidden.is_empty() {
                 continue;
             }
+
+            let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
             let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
             result.push((hidden, effective));
         }
