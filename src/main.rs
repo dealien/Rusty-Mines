@@ -409,7 +409,9 @@ impl eframe::App for MinesweeperApp {
                     .show(ui, |ui| {
                         for y in 0..self.board.height {
                             for x in 0..self.board.width {
-                                let cell = self.board.get_cell(x, y).unwrap();
+                                let Some(cell) = self.board.get_cell(x, y) else {
+                                    continue;
+                                };
 
                                 const NUMBER_STRINGS: [&str; 9] = [
                                     "   ", " 1 ", " 2 ", " 3 ", " 4 ", " 5 ", " 6 ", " 7 ", " 8 ",
