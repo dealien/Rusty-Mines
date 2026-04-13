@@ -83,11 +83,7 @@ impl Board {
     }
 
     /// Returns an iterator over the valid adjacent coordinates for a given cell.
-    pub fn adjacent_cells(
-        &self,
-        x: usize,
-        y: usize,
-    ) -> impl Iterator<Item = (usize, usize)> + use<> {
+    pub fn adjacent_cells(&self, x: usize, y: usize) -> impl Iterator<Item = (usize, usize)> {
         let width = self.width as isize;
         let height = self.height as isize;
         let x = x as isize;
@@ -115,7 +111,7 @@ impl Board {
         x: usize,
         y: usize,
         state: CellState,
-    ) -> impl Iterator<Item = (usize, usize)> + use<'_> {
+    ) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.adjacent_cells(x, y)
             .filter(move |&(nx, ny)| self.cells[self.index(nx, ny)].state == state)
     }
@@ -232,8 +228,7 @@ impl Board {
                     count += 1;
                 }
 
-                for i in 0..count {
-                    let (nx, ny) = neighbors[i];
+                for &(nx, ny) in neighbors.iter().take(count) {
                     let n_idx = self.index(nx, ny);
                     // All neighbors of a 0-cell are guaranteed safe.
                     // We must check state again because a cell could have been pushed multiple times.

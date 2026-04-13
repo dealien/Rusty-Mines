@@ -477,10 +477,8 @@ impl Solver {
                 }
                 let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
                 let local_prob = effective as f32 / hidden_count as f32;
-                for i in 0..hidden_count {
-                    probs
-                        .entry(hidden[i])
-                        .and_modify(|p| *p = p.max(local_prob));
+                for &pos in hidden.iter().take(hidden_count) {
+                    probs.entry(pos).and_modify(|p| *p = p.max(local_prob));
                 }
             }
         }
@@ -531,14 +529,14 @@ impl Solver {
                     let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
 
                     if effective == 0 {
-                        for i in 0..uncertain_count {
-                            if confirmed_safe.insert(uncertain[i]) {
+                        for &pos in uncertain.iter().take(uncertain_count) {
+                            if confirmed_safe.insert(pos) {
                                 changed = true;
                             }
                         }
                     } else if uncertain_count > 0 && effective == uncertain_count {
-                        for i in 0..uncertain_count {
-                            if confirmed_mine.insert(uncertain[i]) {
+                        for &pos in uncertain.iter().take(uncertain_count) {
+                            if confirmed_mine.insert(pos) {
                                 changed = true;
                             }
                         }
