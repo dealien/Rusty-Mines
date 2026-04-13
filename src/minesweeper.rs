@@ -342,6 +342,26 @@ mod tests {
     }
 
     #[test]
+    fn test_reveal_out_of_bounds() {
+        let mut board = Board::new(5, 5, 5).unwrap();
+        // Test x out of bounds
+        board.reveal(5, 0);
+        // Test y out of bounds
+        board.reveal(0, 5);
+        // Test both out of bounds
+        board.reveal(5, 5);
+
+        // Ensure no cell state changed (all should be Hidden)
+        for cell in &board.cells {
+            assert_eq!(cell.state, CellState::Hidden);
+        }
+        // Ensure game state is still Playing
+        assert_eq!(board.state, GameState::Playing);
+        // Ensure first_click is still true
+        assert!(board.first_click);
+    }
+
+    #[test]
     fn test_invalid_board_parameters() {
         // Zero dimensions
         assert!(Board::new(0, 10, 5).is_none());
