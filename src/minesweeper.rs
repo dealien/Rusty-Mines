@@ -179,44 +179,47 @@ impl Board {
             return;
         }
 
-        let mut stack = vec![(x, y)];
+        let idx = self.index(x, y);
+        if self.cells[idx].state != CellState::Hidden {
+            return;
+        }
 
-        while let Some((cx, cy)) = stack.pop() {
-            if self.state != GameState::Playing {
-                break;
-            }
+        if self.first_click {
+            self.place_mines_after_first_click(x, y);
+        }
 
-            let idx = self.index(cx, cy);
+        // Re-read cell after potential mine placement
+        let idx = self.index(x, y);
+        self.cells[idx].state = CellState::Revealed;
 
-            if self.cells[idx].state != CellState::Hidden {
-                continue;
-            }
+        if self.cells[idx].is_mine {
+            self.state = GameState::Lost;
+            self.reveal_all_mines();
+            return;
+        }
 
-            if self.first_click {
-                self.place_mines_after_first_click(cx, cy);
-            }
+        self.unrevealed_safe_cells -= 1;
 
-            self.cells[idx].state = CellState::Revealed;
+        if self.cells[idx].adjacent_mines == 0 {
+            let mut stack = Vec::with_capacity(16);
+            stack.push((x, y));
 
-            if self.cells[idx].is_mine {
-                self.state = GameState::Lost;
-                self.reveal_all_mines();
-                break;
-            } else {
-                self.unrevealed_safe_cells -= 1;
-            }
-
-            if self.cells[idx].adjacent_mines == 0 {
-                // Flood fill for empty cells
+            while let Some((cx, cy)) = stack.pop() {
                 for (nx, ny) in self.adjacent_cells(cx, cy) {
-                    if self.cells[self.index(nx, ny)].state == CellState::Hidden {
-                        stack.push((nx, ny));
+                    let n_idx = self.index(nx, ny);
+                    if self.cells[n_idx].state == CellState::Hidden {
+                        // All neighbors of a 0-cell are guaranteed safe
+                        self.cells[n_idx].state = CellState::Revealed;
+                        self.unrevealed_safe_cells -= 1;
+                        if self.cells[n_idx].adjacent_mines == 0 {
+                            stack.push((nx, ny));
+                        }
                     }
                 }
             }
-
-            self.check_win();
         }
+
+        self.check_win();
     }
 
     pub fn toggle_flag(&mut self, x: usize, y: usize) {

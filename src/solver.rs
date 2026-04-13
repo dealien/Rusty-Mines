@@ -197,22 +197,25 @@ impl Solver {
                 }
 
                 let mut flag_count = 0;
-                let mut hidden = Vec::new();
+                let mut hidden = [(0, 0); 8];
+                let mut hidden_count = 0;
 
                 for (nx, ny) in board.adjacent_cells(x, y) {
                     if let Some(c) = board.get_cell(nx, ny) {
                         match c.state {
                             CellState::Flagged => flag_count += 1,
-                            CellState::Hidden => hidden.push((nx, ny)),
+                            CellState::Hidden => {
+                                hidden[hidden_count] = (nx, ny);
+                                hidden_count += 1;
+                            }
                             _ => {}
                         }
                     }
                 }
 
                 let number = cell.adjacent_mines as usize;
-                let hidden_count = hidden.len();
 
-                if flag_count == number && !hidden.is_empty() {
+                if flag_count == number && hidden_count > 0 {
                     // All mines accounted for – reveal the rest.
                     self.state
                         .highlighted_cells
@@ -220,7 +223,7 @@ impl Solver {
                     return Some(SolverAction::Reveal(hidden[0].0, hidden[0].1));
                 }
 
-                if flag_count + hidden_count == number && !hidden.is_empty() {
+                if flag_count + hidden_count == number && hidden_count > 0 {
                     // Every hidden neighbour must be a mine.
                     self.state
                         .highlighted_cells
@@ -470,24 +473,30 @@ impl Solver {
                 }
 
                 let mut flag_count = 0;
-                let mut hidden = Vec::new();
+                let mut hidden = [(0, 0); 8];
+                let mut hidden_count = 0;
                 for (nx, ny) in board.adjacent_cells(x, y) {
                     if let Some(c) = board.get_cell(nx, ny) {
                         match c.state {
                             CellState::Flagged => flag_count += 1,
-                            CellState::Hidden => hidden.push((nx, ny)),
+                            CellState::Hidden => {
+                                hidden[hidden_count] = (nx, ny);
+                                hidden_count += 1;
+                            }
                             _ => {}
                         }
                     }
                 }
 
-                if hidden.is_empty() {
+                if hidden_count == 0 {
                     continue;
                 }
                 let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
-                let local_prob = effective as f32 / hidden.len() as f32;
-                for pos in &hidden {
-                    probs.entry(*pos).and_modify(|p| *p = p.max(local_prob));
+                let local_prob = effective as f32 / hidden_count as f32;
+                for i in 0..hidden_count {
+                    probs
+                        .entry(hidden[i])
+                        .and_modify(|p| *p = p.max(local_prob));
                 }
             }
         }
@@ -522,7 +531,8 @@ impl Solver {
                         _ => continue,
                     };
                     let mut flag_count = 0usize;
-                    let mut uncertain: Vec<(usize, usize)> = Vec::new();
+                    let mut uncertain = [(0, 0); 8];
+                    let mut uncertain_count = 0;
 
                     for pos in board.adjacent_cells(x, y) {
                         match board.get_cell(pos.0, pos.1).map(|c| c.state) {
@@ -531,7 +541,8 @@ impl Solver {
                                 if confirmed_mine.contains(&pos) {
                                     flag_count += 1; // treat as additional flag
                                 } else if !confirmed_safe.contains(&pos) {
-                                    uncertain.push(pos); // truly uncertain
+                                    uncertain[uncertain_count] = pos;
+                                    uncertain_count += 1;
                                 }
                                 // confirmed_safe cells are excluded from uncertainty
                             }
@@ -542,14 +553,14 @@ impl Solver {
                     let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
 
                     if effective == 0 {
-                        for pos in &uncertain {
-                            if confirmed_safe.insert(*pos) {
+                        for i in 0..uncertain_count {
+                            if confirmed_safe.insert(uncertain[i]) {
                                 changed = true;
                             }
                         }
-                    } else if !uncertain.is_empty() && effective == uncertain.len() {
-                        for pos in &uncertain {
-                            if confirmed_mine.insert(*pos) {
+                    } else if uncertain_count > 0 && effective == uncertain_count {
+                        for i in 0..uncertain_count {
+                            if confirmed_mine.insert(uncertain[i]) {
                                 changed = true;
                             }
                         }
