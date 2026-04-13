@@ -85,20 +85,6 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
         }
     }
 
-    // Shared neighbour-gathering closure.
-    let neighbours = |cx: usize, cy: usize| -> (usize, Vec<(usize, usize)>) {
-        let mut flags = 0usize;
-        let mut hidden = Vec::new();
-        for (nx, ny) in board.adjacent_cells(cx, cy) {
-            match board.get_cell(nx, ny).map(|c| c.state) {
-                Some(CellState::Flagged) => flags += 1,
-                Some(CellState::Hidden) => hidden.push((nx, ny)),
-                _ => {}
-            }
-        }
-        (flags, hidden)
-    };
-
     // Pass 1 – local max-blend heuristic.
     for y in 0..board.height {
         for x in 0..board.width {
@@ -108,7 +94,8 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
                 }
                 _ => continue,
             };
-            let (flag_count, hidden) = neighbours(x, y);
+            let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
+            let hidden: Vec<_> = board.adjacent_cells_with_state(x, y, CellState::Hidden).collect();
             if hidden.is_empty() {
                 continue;
             }
@@ -142,15 +129,14 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
                     }
                     _ => continue,
                 };
-                // neighbours() returns (base_flag_count, all_hidden_neighbours).
-                let (base_flags, raw_hidden) = neighbours(x, y);
+                let base_flags = board.count_adjacent_with_state(x, y, CellState::Flagged);
                 let mut extra_flags = 0usize;
                 let mut uncertain: Vec<(usize, usize)> = Vec::new();
-                for pos in &raw_hidden {
-                    if confirmed_mine.contains(pos) {
+                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                    if confirmed_mine.contains(&pos) {
                         extra_flags += 1;
-                    } else if !confirmed_safe.contains(pos) {
-                        uncertain.push(*pos);
+                    } else if !confirmed_safe.contains(&pos) {
+                        uncertain.push(pos);
                     }
                 }
                 let effective =

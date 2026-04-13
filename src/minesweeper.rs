@@ -113,6 +113,22 @@ impl Board {
         }
     }
 
+    /// Returns an iterator over adjacent coordinates matching a specific state.
+    pub fn adjacent_cells_with_state(
+        &self,
+        x: usize,
+        y: usize,
+        state: CellState,
+    ) -> impl Iterator<Item = (usize, usize)> {
+        self.adjacent_cells(x, y)
+            .filter(move |&(nx, ny)| self.get_cell(nx, ny).is_some_and(|c| c.state == state))
+    }
+
+    /// Returns the number of adjacent cells matching a specific state.
+    pub fn count_adjacent_with_state(&self, x: usize, y: usize, state: CellState) -> usize {
+        self.adjacent_cells_with_state(x, y, state).count()
+    }
+
     // Place mines randomly, ensuring the first clicked cell and its surroundings are safe
     fn place_mines_after_first_click(&mut self, first_x: usize, first_y: usize) {
         let mut rng = rand::thread_rng();
