@@ -105,6 +105,29 @@ impl Board {
         })
     }
 
+    /// Returns an iterator over valid adjacent coordinates that have a specific state.
+    pub fn adjacent_cells_with_state(
+        &self,
+        x: usize,
+        y: usize,
+        state: CellState,
+    ) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.adjacent_cells(x, y)
+            .filter(move |&(nx, ny)| self.cells[self.index(nx, ny)].state == state)
+    }
+
+    /// Counts valid adjacent cells with a specific state.
+    pub fn count_adjacent_with_state(&self, x: usize, y: usize, state: CellState) -> usize {
+        self.adjacent_cells_with_state(x, y, state).count()
+    }
+
+    /// Counts valid adjacent mines.
+    pub fn count_adjacent_mines(&self, x: usize, y: usize) -> u8 {
+        self.adjacent_cells(x, y)
+            .filter(|&(nx, ny)| self.cells[self.index(nx, ny)].is_mine)
+            .count() as u8
+    }
+
     pub fn get_cell(&self, x: usize, y: usize) -> Option<&Cell> {
         if x < self.width && y < self.height {
             Some(&self.cells[self.index(x, y)])
@@ -152,20 +175,11 @@ impl Board {
     fn calculate_adjacent_mines(&mut self) {
         for y in 0..self.height {
             for x in 0..self.width {
-                if self.cells[self.index(x, y)].is_mine {
+                let idx = self.index(x, y);
+                if self.cells[idx].is_mine {
                     continue;
                 }
-
-                let mut count = 0;
-                for (nx, ny) in self.adjacent_cells(x, y) {
-                    let n_idx = self.index(nx, ny);
-                    if self.cells[n_idx].is_mine {
-                        count += 1;
-                    }
-                }
-
-                let idx = self.index(x, y);
-                self.cells[idx].adjacent_mines = count;
+                self.cells[idx].adjacent_mines = self.count_adjacent_mines(x, y);
             }
         }
     }
@@ -180,30 +194,52 @@ impl Board {
         }
 
         let idx = self.index(x, y);
-
         if self.cells[idx].state != CellState::Hidden {
-            return; // Can't reveal flagged or already revealed cells
+            return;
         }
 
         if self.first_click {
             self.place_mines_after_first_click(x, y);
         }
 
+        // Re-read cell after potential mine placement
+        let idx = self.index(x, y);
         self.cells[idx].state = CellState::Revealed;
 
         if self.cells[idx].is_mine {
             self.state = GameState::Lost;
             self.reveal_all_mines();
             return;
-        } else {
-            self.unrevealed_safe_cells -= 1;
         }
 
+        self.unrevealed_safe_cells -= 1;
+
         if self.cells[idx].adjacent_mines == 0 {
-            // Flood fill for empty cells
-            let adjacent = self.adjacent_cells(x, y).collect::<Vec<_>>();
-            for (nx, ny) in adjacent {
-                self.reveal(nx, ny);
+            let mut stack = Vec::with_capacity(16);
+            stack.push((x, y));
+
+            while let Some((cx, cy)) = stack.pop() {
+                // Gather valid neighbors into a stack array first to satisfy borrow checker.
+                // We use adjacent_cells_with_state to filter only Hidden ones.
+                let mut neighbors = [(0, 0); 8];
+                let mut count = 0;
+                for pos in self.adjacent_cells_with_state(cx, cy, CellState::Hidden) {
+                    neighbors[count] = pos;
+                    count += 1;
+                }
+
+                for &(nx, ny) in neighbors.iter().take(count) {
+                    let n_idx = self.index(nx, ny);
+                    // All neighbors of a 0-cell are guaranteed safe.
+                    // We must check state again because a cell could have been pushed multiple times.
+                    if self.cells[n_idx].state == CellState::Hidden {
+                        self.cells[n_idx].state = CellState::Revealed;
+                        self.unrevealed_safe_cells -= 1;
+                        if self.cells[n_idx].adjacent_mines == 0 {
+                            stack.push((nx, ny));
+                        }
+                    }
+                }
             }
         }
 

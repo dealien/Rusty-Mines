@@ -196,39 +196,30 @@ impl Solver {
                     continue;
                 }
 
-                let neighbours = get_neighbours(board, x, y);
-                let flagged: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .cloned()
-                    .collect();
-                let hidden: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
+                let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
+                let mut hidden = [(0, 0); 8];
+                let mut hidden_count = 0;
+
+                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                    hidden[hidden_count] = pos;
+                    hidden_count += 1;
+                }
 
                 let number = cell.adjacent_mines as usize;
-                let flag_count = flagged.len();
-                let hidden_count = hidden.len();
 
-                if flag_count == number && !hidden.is_empty() {
+                if flag_count == number && hidden_count > 0 {
                     // All mines accounted for – reveal the rest.
-                    self.state.highlighted_cells.extend(neighbours.iter());
+                    self.state
+                        .highlighted_cells
+                        .extend(board.adjacent_cells(x, y));
                     return Some(SolverAction::Reveal(hidden[0].0, hidden[0].1));
                 }
 
-                if flag_count + hidden_count == number && !hidden.is_empty() {
+                if flag_count + hidden_count == number && hidden_count > 0 {
                     // Every hidden neighbour must be a mine.
-                    self.state.highlighted_cells.extend(neighbours.iter());
+                    self.state
+                        .highlighted_cells
+                        .extend(board.adjacent_cells(x, y));
                     return Some(SolverAction::Flag(hidden[0].0, hidden[0].1));
                 }
             }
@@ -255,24 +246,20 @@ impl Solver {
                 if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
                     return None;
                 }
-                let neighbours = get_neighbours(board, x, y);
-                let flag_count = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .count();
-                let hidden: HashSet<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
+                let mut flag_count = 0;
+                let mut hidden = HashSet::new();
+
+                for (nx, ny) in board.adjacent_cells(x, y) {
+                    if let Some(c) = board.get_cell(nx, ny) {
+                        match c.state {
+                            CellState::Flagged => flag_count += 1,
+                            CellState::Hidden => {
+                                hidden.insert((nx, ny));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
 
                 if hidden.is_empty() {
                     return None;
@@ -476,32 +463,22 @@ impl Solver {
                 if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
                     continue;
                 }
-                let neighbours = get_neighbours(board, x, y);
-                let flag_count = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Flagged)
-                    })
-                    .count();
-                let hidden: Vec<_> = neighbours
-                    .iter()
-                    .filter(|&&(nx, ny)| {
-                        board
-                            .get_cell(nx, ny)
-                            .is_some_and(|c| c.state == CellState::Hidden)
-                    })
-                    .cloned()
-                    .collect();
 
-                if hidden.is_empty() {
+                let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
+                let mut hidden = [(0, 0); 8];
+                let mut hidden_count = 0;
+                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                    hidden[hidden_count] = pos;
+                    hidden_count += 1;
+                }
+
+                if hidden_count == 0 {
                     continue;
                 }
                 let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
-                let local_prob = effective as f32 / hidden.len() as f32;
-                for pos in &hidden {
-                    probs.entry(*pos).and_modify(|p| *p = p.max(local_prob));
+                let local_prob = effective as f32 / hidden_count as f32;
+                for &pos in hidden.iter().take(hidden_count) {
+                    probs.entry(pos).and_modify(|p| *p = p.max(local_prob));
                 }
             }
         }
@@ -535,36 +512,31 @@ impl Solver {
                         }
                         _ => continue,
                     };
-                    let all_neighbours = get_neighbours(board, x, y);
-                    let mut flag_count = 0usize;
-                    let mut uncertain: Vec<(usize, usize)> = Vec::new();
+                    let mut flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
+                    let mut uncertain = [(0, 0); 8];
+                    let mut uncertain_count = 0;
 
-                    for &pos in &all_neighbours {
-                        match board.get_cell(pos.0, pos.1).map(|c| c.state) {
-                            Some(CellState::Flagged) => flag_count += 1,
-                            Some(CellState::Hidden) => {
-                                if confirmed_mine.contains(&pos) {
-                                    flag_count += 1; // treat as additional flag
-                                } else if !confirmed_safe.contains(&pos) {
-                                    uncertain.push(pos); // truly uncertain
-                                }
-                                // confirmed_safe cells are excluded from uncertainty
-                            }
-                            _ => {}
+                    for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                        if confirmed_mine.contains(&pos) {
+                            flag_count += 1; // treat as additional flag
+                        } else if !confirmed_safe.contains(&pos) {
+                            uncertain[uncertain_count] = pos;
+                            uncertain_count += 1;
                         }
+                        // confirmed_safe cells are excluded from uncertainty
                     }
 
                     let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
 
                     if effective == 0 {
-                        for pos in &uncertain {
-                            if confirmed_safe.insert(*pos) {
+                        for &pos in uncertain.iter().take(uncertain_count) {
+                            if confirmed_safe.insert(pos) {
                                 changed = true;
                             }
                         }
-                    } else if !uncertain.is_empty() && effective == uncertain.len() {
-                        for pos in &uncertain {
-                            if confirmed_mine.insert(*pos) {
+                    } else if uncertain_count > 0 && effective == uncertain_count {
+                        for &pos in uncertain.iter().take(uncertain_count) {
+                            if confirmed_mine.insert(pos) {
                                 changed = true;
                             }
                         }
@@ -614,17 +586,17 @@ impl Solver {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| {
                     // Tie-break 1: Most hidden neighbours (information yield).
-                    let a_hidden = get_neighbours(board, ax, ay)
-                        .iter()
-                        .filter(|&&(nx, ny)| {
+                    let a_hidden = board
+                        .adjacent_cells(ax, ay)
+                        .filter(|&(nx, ny)| {
                             board
                                 .get_cell(nx, ny)
                                 .is_some_and(|c| c.state == CellState::Hidden)
                         })
                         .count();
-                    let b_hidden = get_neighbours(board, bx, by)
-                        .iter()
-                        .filter(|&&(nx, ny)| {
+                    let b_hidden = board
+                        .adjacent_cells(bx, by)
+                        .filter(|&(nx, ny)| {
                             board
                                 .get_cell(nx, ny)
                                 .is_some_and(|c| c.state == CellState::Hidden)
@@ -691,28 +663,15 @@ fn build_frontier_constraints(board: &Board) -> Vec<(HashSet<(usize, usize)>, us
                 }
                 _ => continue,
             };
-            let neighbours = get_neighbours(board, x, y);
-            let flag_count = neighbours
-                .iter()
-                .filter(|&&(nx, ny)| {
-                    board
-                        .get_cell(nx, ny)
-                        .is_some_and(|c| c.state == CellState::Flagged)
-                })
-                .count();
-            let hidden: HashSet<(usize, usize)> = neighbours
-                .iter()
-                .filter(|&&(nx, ny)| {
-                    board
-                        .get_cell(nx, ny)
-                        .is_some_and(|c| c.state == CellState::Hidden)
-                })
-                .cloned()
-                .collect();
 
+            let hidden: HashSet<_> = board
+                .adjacent_cells_with_state(x, y, CellState::Hidden)
+                .collect();
             if hidden.is_empty() {
                 continue;
             }
+
+            let flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
             let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
             result.push((hidden, effective));
         }
@@ -891,15 +850,6 @@ fn backtrack(
 }
 
 // ---------------------------------------------------------------------------
-// General helper utilities
-// ---------------------------------------------------------------------------
-
-/// Return all valid `(x, y)` neighbours of a cell within the board bounds.
-fn get_neighbours(board: &Board, x: usize, y: usize) -> Vec<(usize, usize)> {
-    board.adjacent_cells(x, y).collect()
-}
-
-// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -991,7 +941,7 @@ mod tests {
         let action = solver.get_next_move(&board);
 
         if let SolverAction::Reveal(x, y) = action {
-            let hidden_count = get_neighbours(&board, x, y).len();
+            let hidden_count = board.adjacent_cells(x, y).count();
             assert_eq!(
                 hidden_count, 8,
                 "Expected an interior cell (8 neighbours), got ({x},{y}) with {hidden_count}"
