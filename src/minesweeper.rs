@@ -379,4 +379,30 @@ mod tests {
         // Normal board
         assert!(Board::new(10, 10, 99).is_some());
     }
+
+    #[test]
+    fn test_count_adjacent_mines() {
+        // Create a 3x3 board with 0 mines to ensure determinism
+        let mut board = Board::new(3, 3, 0).unwrap();
+
+        // Manually place mines at (0,0) and (1,1)
+        // (0,0) M . .
+        // (0,1) . M .
+        // (0,2) . . .
+        let idx00 = board.index(0, 0);
+        board.cells[idx00].is_mine = true;
+        let idx11 = board.index(1, 1);
+        board.cells[idx11].is_mine = true;
+
+        // Verify counts
+        assert_eq!(board.count_adjacent_mines(0, 0), 1); // Only (1,1)
+        assert_eq!(board.count_adjacent_mines(1, 1), 1); // Only (0,0)
+        assert_eq!(board.count_adjacent_mines(1, 0), 2); // (0,0) and (1,1)
+        assert_eq!(board.count_adjacent_mines(0, 1), 2); // (0,0) and (1,1)
+        assert_eq!(board.count_adjacent_mines(2, 0), 1); // Only (1,1)
+        assert_eq!(board.count_adjacent_mines(0, 2), 1); // Only (1,1)
+        assert_eq!(board.count_adjacent_mines(2, 2), 1); // Only (1,1)
+        assert_eq!(board.count_adjacent_mines(2, 1), 1); // Only (1,1)
+        assert_eq!(board.count_adjacent_mines(1, 2), 1); // Only (1,1)
+    }
 }
