@@ -11,6 +11,9 @@ type Constraint = (usize, usize, usize, HashSet<(usize, usize)>);
 /// exact per-cell mine frequencies without re-enumeration.
 type CspRegionConfig = (Vec<(usize, usize)>, Vec<Vec<u8>>);
 
+/// Type alias for the result of constraint propagation: `(confirmed_safe, confirmed_mines)`.
+pub type ConfirmedCells = (HashSet<(usize, usize)>, HashSet<(usize, usize)>);
+
 /// Internal solver errors for bailing out of complex deductions.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SolveError {
@@ -99,7 +102,7 @@ impl Default for SolverSettings {
 /// This implements the same core logic as standard deduction but operates
 /// transitively: if a cell is confirmed safe, it may unlock further deductions
 /// in its neighbours.
-pub fn find_confirmed_cells(board: &Board) -> (HashSet<(usize, usize)>, HashSet<(usize, usize)>) {
+pub fn find_confirmed_cells(board: &Board) -> ConfirmedCells {
     let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
     let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
 
