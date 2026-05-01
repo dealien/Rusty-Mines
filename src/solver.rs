@@ -99,9 +99,7 @@ impl Default for SolverSettings {
 /// This implements the same core logic as standard deduction but operates
 /// transitively: if a cell is confirmed safe, it may unlock further deductions
 /// in its neighbours.
-pub fn find_confirmed_cells(
-    board: &Board,
-) -> (HashSet<(usize, usize)>, HashSet<(usize, usize)>) {
+pub fn find_confirmed_cells(board: &Board) -> (HashSet<(usize, usize)>, HashSet<(usize, usize)>) {
     let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
     let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
 
@@ -111,9 +109,7 @@ pub fn find_confirmed_cells(
             for x in 0..board.width {
                 let cell = match board.get_cell(x, y) {
                     Some(c)
-                        if c.state == CellState::Revealed
-                            && !c.is_mine
-                            && c.adjacent_mines > 0 =>
+                        if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 =>
                     {
                         c
                     }
