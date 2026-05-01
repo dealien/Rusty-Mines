@@ -93,6 +93,69 @@ impl Default for SolverSettings {
 // Solver
 // ---------------------------------------------------------------------------
 
+/// Iteratively propagates constraints until convergence to find cells that are
+/// guaranteed to be safe or mines.
+///
+/// This implements the same core logic as standard deduction but operates
+/// transitively: if a cell is confirmed safe, it may unlock further deductions
+/// in its neighbours.
+pub fn find_confirmed_cells(
+    board: &Board,
+) -> (HashSet<(usize, usize)>, HashSet<(usize, usize)>) {
+    let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
+    let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
+
+    loop {
+        let mut changed = false;
+        for y in 0..board.height {
+            for x in 0..board.width {
+                let cell = match board.get_cell(x, y) {
+                    Some(c)
+                        if c.state == CellState::Revealed
+                            && !c.is_mine
+                            && c.adjacent_mines > 0 =>
+                    {
+                        c
+                    }
+                    _ => continue,
+                };
+                let mut flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
+                let mut uncertain = [(0, 0); 8];
+                let mut uncertain_count = 0;
+
+                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                    if confirmed_mine.contains(&pos) {
+                        flag_count += 1; // treat as additional flag
+                    } else if !confirmed_safe.contains(&pos) {
+                        uncertain[uncertain_count] = pos;
+                        uncertain_count += 1;
+                    }
+                }
+
+                let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
+
+                if effective == 0 {
+                    for &pos in uncertain.iter().take(uncertain_count) {
+                        if confirmed_safe.insert(pos) {
+                            changed = true;
+                        }
+                    }
+                } else if uncertain_count > 0 && effective == uncertain_count {
+                    for &pos in uncertain.iter().take(uncertain_count) {
+                        if confirmed_mine.insert(pos) {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    (confirmed_safe, confirmed_mine)
+}
+
 /// The Minesweeper auto-solver.
 ///
 /// The solver is **read-only** with respect to the board: it inspects `&Board`
@@ -484,69 +547,7 @@ impl Solver {
         }
 
         // Pass 2 – iterative constraint propagation until convergence.
-        //
-        // A single pass cannot catch transitive deductions: e.g. Cell A is
-        // confirmed safe → constraints containing A are re-evaluated → Cell B
-        // may now also be confirmed safe or a mine.  We repeat until nothing
-        // changes.
-        //
-        // Rules per numbered cell on each iteration:
-        //   confirmed_safe cells → excluded (treated as already-revealed safe)
-        //   confirmed_mine cells → counted as additional effective flags
-        //   If effective_mines == 0:            all uncertain hidden → safe (0 %)
-        //   If effective_mines == uncertain_count: all uncertain hidden → mine (100 %)
-        let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
-        let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
-
-        loop {
-            let mut changed = false;
-            for y in 0..board.height {
-                for x in 0..board.width {
-                    let cell = match board.get_cell(x, y) {
-                        Some(c)
-                            if c.state == CellState::Revealed
-                                && !c.is_mine
-                                && c.adjacent_mines > 0 =>
-                        {
-                            c
-                        }
-                        _ => continue,
-                    };
-                    let mut flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
-                    let mut uncertain = [(0, 0); 8];
-                    let mut uncertain_count = 0;
-
-                    for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
-                        if confirmed_mine.contains(&pos) {
-                            flag_count += 1; // treat as additional flag
-                        } else if !confirmed_safe.contains(&pos) {
-                            uncertain[uncertain_count] = pos;
-                            uncertain_count += 1;
-                        }
-                        // confirmed_safe cells are excluded from uncertainty
-                    }
-
-                    let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
-
-                    if effective == 0 {
-                        for &pos in uncertain.iter().take(uncertain_count) {
-                            if confirmed_safe.insert(pos) {
-                                changed = true;
-                            }
-                        }
-                    } else if uncertain_count > 0 && effective == uncertain_count {
-                        for &pos in uncertain.iter().take(uncertain_count) {
-                            if confirmed_mine.insert(pos) {
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        let (confirmed_safe, confirmed_mine) = find_confirmed_cells(board);
 
         // Apply confirmed knowledge — override the heuristic estimates.
         for pos in &confirmed_safe {

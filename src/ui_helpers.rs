@@ -122,69 +122,7 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
     }
 
     // Pass 2 – iterative constraint propagation until convergence.
-    // Same algorithm as apply_probability_guess in solver.rs:
-    // confirmed_safe cells are excluded from uncertainty counts,
-    // confirmed_mine cells are treated as additional flags.
-    // Repeats until no new deductions fire.
-    let mut confirmed_safe: std::collections::HashSet<(usize, usize)> =
-        std::collections::HashSet::new();
-    let mut confirmed_mine: std::collections::HashSet<(usize, usize)> =
-        std::collections::HashSet::new();
-
-    loop {
-        let mut changed = false;
-        for y in 0..board.height {
-            for x in 0..board.width {
-                let cell = match board.get_cell(x, y) {
-                    Some(c)
-                        if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 =>
-                    {
-                        c
-                    }
-                    _ => continue,
-                };
-                let mut base_flags = 0;
-                let mut extra_flags = 0;
-                let mut uncertain = [(0, 0); 8];
-                let mut uncertain_count = 0;
-
-                for (nx, ny) in board.adjacent_cells(x, y) {
-                    match board.get_cell(nx, ny).map(|c| c.state) {
-                        Some(CellState::Flagged) => base_flags += 1,
-                        Some(CellState::Hidden) => {
-                            let pos = (nx, ny);
-                            if confirmed_mine.contains(&pos) {
-                                extra_flags += 1;
-                            } else if !confirmed_safe.contains(&pos) {
-                                uncertain[uncertain_count] = pos;
-                                uncertain_count += 1;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                let effective =
-                    (cell.adjacent_mines as usize).saturating_sub(base_flags + extra_flags);
-                if effective == 0 {
-                    for &pos in uncertain.iter().take(uncertain_count) {
-                        if confirmed_safe.insert(pos) {
-                            changed = true;
-                        }
-                    }
-                } else if uncertain_count > 0 && effective == uncertain_count {
-                    for &pos in uncertain.iter().take(uncertain_count) {
-                        if confirmed_mine.insert(pos) {
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let (confirmed_safe, confirmed_mine) = crate::solver::find_confirmed_cells(board);
 
     for pos in &confirmed_safe {
         probs.insert(*pos, 0.0);
