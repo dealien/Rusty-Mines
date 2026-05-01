@@ -442,7 +442,7 @@ impl Solver {
         let global_prob = remaining_mines as f32 / total_hidden as f32;
 
         // Initialise all hidden cells with the global density.
-        let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
+        let mut probs: HashMap<(usize, usize), f32> = HashMap::with_capacity(total_hidden);
         for y in 0..board.height {
             for x in 0..board.width {
                 if let Some(cell) = board.get_cell(x, y)
@@ -495,8 +495,8 @@ impl Solver {
         //   confirmed_mine cells → counted as additional effective flags
         //   If effective_mines == 0:            all uncertain hidden → safe (0 %)
         //   If effective_mines == uncertain_count: all uncertain hidden → mine (100 %)
-        let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
-        let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
+        // Use a status array for O(1) lookups: 0=Unknown, 1=Safe, 2=Mine
+        let mut status = vec![0u8; board.width * board.height];
 
         loop {
             let mut changed = false;
@@ -516,27 +516,32 @@ impl Solver {
                     let mut uncertain = [(0, 0); 8];
                     let mut uncertain_count = 0;
 
-                    for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
-                        if confirmed_mine.contains(&pos) {
-                            flag_count += 1; // treat as additional flag
-                        } else if !confirmed_safe.contains(&pos) {
-                            uncertain[uncertain_count] = pos;
-                            uncertain_count += 1;
+                    for (nx, ny) in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
+                        match status[board.index(nx, ny)] {
+                            2 => flag_count += 1, // treat as additional flag
+                            0 => {
+                                uncertain[uncertain_count] = (nx, ny);
+                                uncertain_count += 1;
+                            }
+                            _ => {} // 1 (Safe) is excluded
                         }
-                        // confirmed_safe cells are excluded from uncertainty
                     }
 
                     let effective = (cell.adjacent_mines as usize).saturating_sub(flag_count);
 
                     if effective == 0 {
                         for &pos in uncertain.iter().take(uncertain_count) {
-                            if confirmed_safe.insert(pos) {
+                            let idx = board.index(pos.0, pos.1);
+                            if status[idx] == 0 {
+                                status[idx] = 1;
                                 changed = true;
                             }
                         }
                     } else if uncertain_count > 0 && effective == uncertain_count {
                         for &pos in uncertain.iter().take(uncertain_count) {
-                            if confirmed_mine.insert(pos) {
+                            let idx = board.index(pos.0, pos.1);
+                            if status[idx] == 0 {
+                                status[idx] = 2;
                                 changed = true;
                             }
                         }
@@ -549,11 +554,15 @@ impl Solver {
         }
 
         // Apply confirmed knowledge — override the heuristic estimates.
-        for pos in &confirmed_safe {
-            probs.insert(*pos, 0.0);
-        }
-        for pos in &confirmed_mine {
-            probs.insert(*pos, 1.0);
+        for y in 0..board.height {
+            for x in 0..board.width {
+                let idx = board.index(x, y);
+                if status[idx] == 1 {
+                    probs.insert((x, y), 0.0);
+                } else if status[idx] == 2 {
+                    probs.insert((x, y), 1.0);
+                }
+            }
         }
 
         // Override frontier cells with exact CSP-derived frequencies if Rule 3
