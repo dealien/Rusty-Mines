@@ -1199,4 +1199,23 @@ mod tests {
 
         assert!(matches!(result, Err(SolveError::Timeout)));
     }
+
+    #[test]
+    fn test_solver_state_clear() {
+        let mut state = SolverState {
+            highlighted_cells: vec![(0, 0), (1, 1)],
+            probabilities: HashMap::from([((0, 0), 0.5)]),
+            current_rule: "Test Rule".to_string(),
+            next_action: SolverAction::Reveal(0, 0),
+            csp_configs: vec![(vec![(0, 0)], vec![vec![1]])],
+        };
+
+        state.clear();
+
+        assert!(state.highlighted_cells.is_empty());
+        assert!(state.probabilities.is_empty());
+        assert!(state.current_rule.is_empty());
+        assert_eq!(state.next_action, SolverAction::None);
+        assert!(state.csp_configs.is_empty());
+    }
 }
