@@ -103,31 +103,43 @@ impl Default for SolverSettings {
 /// transitively: if a cell is confirmed safe, it may unlock further deductions
 /// in its neighbours.
 pub fn find_confirmed_cells(board: &Board) -> ConfirmedCells {
-    let mut confirmed_safe: HashSet<(usize, usize)> = HashSet::new();
-    let mut confirmed_mine: HashSet<(usize, usize)> = HashSet::new();
+    let mut confirmed_safe = HashSet::new();
+    let mut confirmed_mine = HashSet::new();
+
+    // Use a flat status array to avoid repeated HashSet lookups in the hot loop.
+    // 0: hidden/uncertain, 1: confirmed safe, 2: confirmed mine
+    let mut status = vec![0u8; board.cells.len()];
 
     loop {
         let mut changed = false;
         for y in 0..board.height {
             for x in 0..board.width {
-                let cell = match board.get_cell(x, y) {
-                    Some(c)
-                        if c.state == CellState::Revealed && !c.is_mine && c.adjacent_mines > 0 =>
-                    {
-                        c
-                    }
-                    _ => continue,
-                };
-                let mut flag_count = board.count_adjacent_with_state(x, y, CellState::Flagged);
+                let idx = board.index(x, y);
+                let cell = &board.cells[idx];
+                if cell.state != CellState::Revealed || cell.is_mine || cell.adjacent_mines == 0 {
+                    continue;
+                }
+
+                let mut flag_count = 0;
                 let mut uncertain = [(0, 0); 8];
                 let mut uncertain_count = 0;
 
-                for pos in board.adjacent_cells_with_state(x, y, CellState::Hidden) {
-                    if confirmed_mine.contains(&pos) {
-                        flag_count += 1; // treat as additional flag
-                    } else if !confirmed_safe.contains(&pos) {
-                        uncertain[uncertain_count] = pos;
-                        uncertain_count += 1;
+                for (nx, ny) in board.adjacent_cells(x, y) {
+                    let n_idx = board.index(nx, ny);
+                    let n_cell = &board.cells[n_idx];
+                    match n_cell.state {
+                        CellState::Flagged => flag_count += 1,
+                        CellState::Hidden => {
+                            match status[n_idx] {
+                                2 => flag_count += 1, // confirmed mine acts as flag
+                                1 => {}               // confirmed safe is ignored
+                                _ => {
+                                    uncertain[uncertain_count] = (nx, ny);
+                                    uncertain_count += 1;
+                                }
+                            }
+                        }
+                        CellState::Revealed => {}
                     }
                 }
 
@@ -135,13 +147,19 @@ pub fn find_confirmed_cells(board: &Board) -> ConfirmedCells {
 
                 if effective == 0 {
                     for &pos in uncertain.iter().take(uncertain_count) {
-                        if confirmed_safe.insert(pos) {
+                        let u_idx = board.index(pos.0, pos.1);
+                        if status[u_idx] == 0 {
+                            status[u_idx] = 1;
+                            confirmed_safe.insert(pos);
                             changed = true;
                         }
                     }
                 } else if uncertain_count > 0 && effective == uncertain_count {
                     for &pos in uncertain.iter().take(uncertain_count) {
-                        if confirmed_mine.insert(pos) {
+                        let u_idx = board.index(pos.0, pos.1);
+                        if status[u_idx] == 0 {
+                            status[u_idx] = 2;
+                            confirmed_mine.insert(pos);
                             changed = true;
                         }
                     }
@@ -152,6 +170,7 @@ pub fn find_confirmed_cells(board: &Board) -> ConfirmedCells {
             break;
         }
     }
+
     (confirmed_safe, confirmed_mine)
 }
 
@@ -504,7 +523,7 @@ impl Solver {
         let global_prob = remaining_mines as f32 / total_hidden as f32;
 
         // Initialise all hidden cells with the global density.
-        let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
+        let mut probs: HashMap<(usize, usize), f32> = HashMap::with_capacity(total_hidden);
         for y in 0..board.height {
             for x in 0..board.width {
                 if let Some(cell) = board.get_cell(x, y)

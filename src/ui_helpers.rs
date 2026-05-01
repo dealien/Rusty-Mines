@@ -73,7 +73,7 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
 
     let global_prob = remaining_mines as f32 / total_hidden as f32;
 
-    let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
+    let mut probs: HashMap<(usize, usize), f32> = HashMap::with_capacity(total_hidden);
     for y in 0..board.height {
         for x in 0..board.width {
             if board
