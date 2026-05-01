@@ -73,7 +73,7 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
 
     let global_prob = remaining_mines as f32 / total_hidden as f32;
 
-    let mut probs: HashMap<(usize, usize), f32> = HashMap::new();
+    let mut probs: HashMap<(usize, usize), f32> = HashMap::with_capacity(total_hidden);
     for y in 0..board.height {
         for x in 0..board.width {
             if board
@@ -126,10 +126,8 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
     // confirmed_safe cells are excluded from uncertainty counts,
     // confirmed_mine cells are treated as additional flags.
     // Repeats until no new deductions fire.
-    let mut confirmed_safe: std::collections::HashSet<(usize, usize)> =
-        std::collections::HashSet::new();
-    let mut confirmed_mine: std::collections::HashSet<(usize, usize)> =
-        std::collections::HashSet::new();
+    // Use a status array for O(1) lookups: 0=Unknown, 1=Safe, 2=Mine
+    let mut status = vec![0u8; board.width * board.height];
 
     loop {
         let mut changed = false;
@@ -152,12 +150,13 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
                     match board.get_cell(nx, ny).map(|c| c.state) {
                         Some(CellState::Flagged) => base_flags += 1,
                         Some(CellState::Hidden) => {
-                            let pos = (nx, ny);
-                            if confirmed_mine.contains(&pos) {
-                                extra_flags += 1;
-                            } else if !confirmed_safe.contains(&pos) {
-                                uncertain[uncertain_count] = pos;
-                                uncertain_count += 1;
+                            match status[board.index(nx, ny)] {
+                                2 => extra_flags += 1,
+                                0 => {
+                                    uncertain[uncertain_count] = (nx, ny);
+                                    uncertain_count += 1;
+                                }
+                                _ => {} // 1 (Safe) is excluded
                             }
                         }
                         _ => {}
@@ -168,13 +167,17 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
                     (cell.adjacent_mines as usize).saturating_sub(base_flags + extra_flags);
                 if effective == 0 {
                     for &pos in uncertain.iter().take(uncertain_count) {
-                        if confirmed_safe.insert(pos) {
+                        let idx = board.index(pos.0, pos.1);
+                        if status[idx] == 0 {
+                            status[idx] = 1;
                             changed = true;
                         }
                     }
                 } else if uncertain_count > 0 && effective == uncertain_count {
                     for &pos in uncertain.iter().take(uncertain_count) {
-                        if confirmed_mine.insert(pos) {
+                        let idx = board.index(pos.0, pos.1);
+                        if status[idx] == 0 {
+                            status[idx] = 2;
                             changed = true;
                         }
                     }
@@ -186,11 +189,15 @@ pub fn compute_probabilities(board: &Board) -> HashMap<(usize, usize), f32> {
         }
     }
 
-    for pos in &confirmed_safe {
-        probs.insert(*pos, 0.0);
-    }
-    for pos in &confirmed_mine {
-        probs.insert(*pos, 1.0);
+    for y in 0..board.height {
+        for x in 0..board.width {
+            let idx = board.index(x, y);
+            if status[idx] == 1 {
+                probs.insert((x, y), 0.0);
+            } else if status[idx] == 2 {
+                probs.insert((x, y), 1.0);
+            }
+        }
     }
 
     probs
